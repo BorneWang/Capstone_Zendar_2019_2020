@@ -2,12 +2,12 @@
 UC Berkeley MEng Capstone Project: Autonomous vehicle perception with high-definition radars 
 
 ### Instructors:
-Jimmy Wang 
-Gabriel Gomes 
+Jimmy Wang <br />
+Gabriel Gomes <br />
 Lou Ggraniou
 
 ### Students:
-Pierre-Louis Blossier 
-Bowen Wang 
-Johan Gerfaux 
+Pierre-Louis Blossier <br />
+Bowen Wang <br />
+Johan Gerfaux <br />
 David Scanlan
