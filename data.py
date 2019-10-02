@@ -89,19 +89,17 @@ class Data:
         """ Return the cropped data corresponding to the intersection of two datasets """
         
         # TODO: deal with case when the image does not have the same orientation
-        # TODO: be sure that the output image has same dimension
         m = fur2earth((self.gps_pos+other_data.gps_pos)/2, self.attitude, True)
         
-        m = np.array([m[0], m[2]])
-        center1 = np.array([other_data.height(), other_data.width()])/2
-        m1 = center1 + m
-        center2 = np.array([self.height(), self.width()])/2
-        m2 = center2 - m
+        center1 = np.array([int(other_data.img.height/2), int(other_data.img.width/2)])
+        m1 = center1 + other_data.meters2indices(m[0], m[2])
+        center2 = np.array([int(self.img.height/2), int(self.img.width/2)])
+        m2 = center2 - self.meters2indices(m[0], m[2])
         
-        r = min(min(min(abs(m1-np.array([0, 0]))), min(abs(m1-np.array([other_data.width(), other_data.width()])))), min(min(abs(m2-np.array([0, 0]))), min(abs(m2-np.array([self.width(), self.height()])))))
+        r = min(min(min(abs(m1-np.array([0, 0]))), min(abs(m1-np.array([other_data.img.width, other_data.img.height])))), min(min(abs(m2-np.array([0, 0]))), min(abs(m2-np.array([self.img.width, self.img.height])))))
 
-        data_1 = self.crop(*(self.meters2indices(m2[0]-r, m2[1]+r)), *(self.meters2indices(m2[0]+r, m2[1]-r)))
-        data_2 = other_data.crop(*(other_data.meters2indices(m1[0]-r, m1[1]+r)), *(other_data.meters2indices(m1[0]+r, m1[1]-r)))
+        data_1 = self.crop(m2[0]-r, m2[1]+r, m2[0]+r, m2[1]-r)
+        data_2 = other_data.crop(m1[0]-r, m1[1]+r, m1[0]+r, m1[1]-r)
         return data_1, data_2
     
     def crop(self, left, up, right, bottom):
