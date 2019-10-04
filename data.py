@@ -7,33 +7,25 @@ Created on Sun Sep 29 16:36:34 2019
 from PIL import Image, ImageDraw
 import numpy as np
 from copy import deepcopy
+from scipy.spatial.transform import Rotation as rot
 
-def flu2earth(pos, q, inverse=False):
+def earth2flu(pos, q, inverse=False):
     """ Change of frame from front-left-up to earth frame """
-    R = np.array([[q[0]**2+q[1]**2-q[2]**2-q[3]**2, 2*q[1]*q[2]-2*q[0]*q[3], 2*q[1]*q[3]+2*q[0]*q[2]],
-                  [2*q[1]*q[2]+2*q[0]*q[3], q[0]**2-q[1]**2+q[2]**2-q[3]**2, 2*q[2]*q[3]-2*q[0]*q[1]],
-                  [2*q[1]*q[3]-2*q[0]*q[2], 2*q[2]*q[3]+2*q[0]*q[1], q[0]**2-q[1]**2-q[2]**2+q[3]**2]])
-    if inverse:
-        return R.dot(pos)
-    else:
-        return R.T.dot(pos)
-
-def fur2flu(pos, inverse=False):
-    """ Change of frame from front-up-right to earth front-left-up """
-    R = np.array([[1,0,0],[0,0,-1],[0,1,0]])
-    if inverse:
-        return R.dot(pos)
-    else:
-        return R.T.dot(pos)
+    quaternion = rot.from_quat(q)
+    return quaternion.apply(pos, inverse)
     
-def fur2earth(pos, q, inverse=False):
+def flu2fur(pos, inverse=False):
+    """ Change of frame from front-up-right to earth front-left-up """
+    return rot.from_quat(np.array([np.sqrt(2)/2,0,0,-np.sqrt(2)/2])).apply(pos, inverse)
+    
+def earth2fur(pos, q, inverse=False):
     """ Change of frame from front-up-right to earth frame """
     if inverse:
-        return fur2flu(flu2earth(pos, q, inverse), inverse)
+        return earth2flu(flu2fur(pos, inverse), q, inverse)
     else:
-        return flu2earth(fur2flu(pos),q)
-    
-class Data:
+        return flu2fur(earth2flu(pos, q))
+
+class RadarData:
     
     def __init__(self, img, gps_pos, attitude, precision=0.04):
         self.img = img
@@ -49,6 +41,12 @@ class Data:
         """ Return max x position of a pixel in image frame """
         return self.precision*(self.img.width-1)
         
+    def meters2indices(self, point):
+        """ Give the position of a pixel according its position in image frame """
+        x_I = int(round(point[0]/self.precision))
+        y_I = int(round(point[1]/self.precision))
+        return x_I, y_I
+    
     def image_grid(self):
         """ give the position of each pixel in the image frame """
         x, y = np.meshgrid(np.linspace(0, self.width(), self.img.width), np.linspace(self.height(), 0, self.img.height))
@@ -57,17 +55,8 @@ class Data:
     def earth_grid(self):
         """ give the position of each pixel in the earthframe """
         img_grid = self.image_grid()
-        earth_grid = deepcopy(np.reshape(img_grid, (np.size(img_grid[:,:,0]),3)))
-        for i in range(0,len(earth_grid)):
-            earth_grid[i] = fur2earth(earth_grid[i], self.attitude)
+        earth_grid = earth2fur(img_grid, self.attitude, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
-    
-    def distance(self, other_data):
-        """ Negative correlation between the two images, flattened to 1D """
-        img_array1 = np.array(self.img)
-        img_array2 = np.array(other_data.img)
-        correl = np.corrcoef(img_array1.ravel(), img_array2.ravel())[0, 1]
-        return -correl
         
     def circle(self):
         """ Take only data in the biggest centered circle that can fit in the image """
@@ -77,35 +66,52 @@ class Data:
         l = min(self.img.width,self.img.height)
         draw.pieslice([(self.img.width-l)/2,(self.img.height-l)/2, (self.img.width+l)/2, (self.img.height+l)/2],0,360,fill=255)
         img = Image.fromarray(np.logical_and(np.array(alpha.convert('1')), np.array(self.img)).astype('uint8')*255).convert('1')
-        return Data(img, self.gps_pos, self.attitude)
+        return RadarData(img, self.gps_pos, self.attitude)
     
-    def meters2indices(self,x,y):
-        """ Give the position of a pixel according its postopn in image frame """
-        x_I = int(round(x/self.precision))
-        y_I = int(round(y/self.precision))
-        return x_I, y_I
+    def distance(self, other_data):
+        """ Negative correlation between the two images, flattened to 1D """
+        img_array1 = np.array(self.img)
+        img_array2 = np.array(other_data.img)
+        correl = np.corrcoef(img_array1.ravel(), img_array2.ravel())[0, 1]
+        return -correl
+    
+    def projection(self, other_data):       
+        """ Project an image on an other image plane (x,y) """
+        rot_vec = (rot.from_quat(self.attitude).inv()*rot.from_quat(other_data.attitude)).as_rotvec()
+        proj_q = rot.from_rotvec(np.array([rot_vec[0], rot_vec[1], 0]))
+        R = proj_q.as_dcm()[0:2,0:2]
+        if np.array_equal(R, np.eye(2)):
+            return deepcopy(self)
+        else:
+            ru_point = R.dot(np.array([self.height(), self.width()]))
+            img = self.img.transform(other_data.meters2indices(ru_point), Image.AFFINE, [R[0,0], R[0,1], 0, R[1,0], R[1,1], 0])
+            return RadarData(img, self.gps_pos, rot.from_rotvec(np.array([0, 0, rot_vec[2]])).as_quat())
     
     def intersection(self, other_data):
-        """ Return the cropped data corresponding to the intersection of two datasets """
+        """ Return the cropped data corresponding to the intersection of two datasets """ 
+        proj_data = self.projection(other_data)
         
-        # TODO: deal with case when the image does not have the same orientation
-        m = fur2earth((self.gps_pos+other_data.gps_pos)/2, self.attitude, True)
-        
-        center1 = np.array([int(other_data.img.height/2), int(other_data.img.width/2)])
-        m1 = center1 + other_data.meters2indices(m[0], m[2])
-        center2 = np.array([int(self.img.height/2), int(self.img.width/2)])
-        m2 = center2 - self.meters2indices(m[0], m[2])
-        
-        r = min(min(min(abs(m1-np.array([0, 0]))), min(abs(m1-np.array([other_data.img.width, other_data.img.height])))), min(min(abs(m2-np.array([0, 0]))), min(abs(m2-np.array([self.img.width, self.img.height])))))
+        c = earth2fur(earth2fur(np.array([proj_data.height()/2, 0, proj_data.width()/2]), proj_data.attitude, True) + proj_data.gps_pos, other_data.attitude)
 
-        data_1 = self.crop(m2[0]-r, m2[1]+r, m2[0]+r, m2[1]-r)
-        data_2 = other_data.crop(m1[0]-r, m1[1]+r, m1[0]+r, m1[1]-r)
+        m = (c + np.array([other_data.height()/2, 0, other_data.width()/2]))/2
+        m1 = other_data.meters2indices(np.array([m[0], m[2]]))
+
+        m = earth2fur(earth2fur(m, other_data.attitude, True) - proj_data.gps_pos, proj_data.attitude)
+        m2 = proj_data.meters2indices(np.array([m[0], m[2]]))
+        
+        r = min(min(min(m1), min(abs(m1-np.array([other_data.img.height, other_data.img.width])))), min(min(m2), min(abs(m2-np.array([proj_data.img.width, proj_data.img.height])))))
+        
+        data_1 = proj_data.crop(m2[1]-r, m2[0]+r, m2[1]+r, m2[0]-r)
+        data_2 = other_data.crop(m1[1]-r, m1[0]+r, m1[1]+r, m1[0]-r)
         return data_1, data_2
+    
+    # TODO: rotate function (from the center)
     
     def crop(self, left, up, right, bottom):
         """ Return a crop of the actual data and its new absolute position and attitude """
-        gps_pos = self.gps_pos + fur2earth(self.precision*np.array([bottom,0,left]), self.attitude)
+        #TODO: to be checked
+        gps_pos = self.gps_pos + earth2fur(self.precision*np.array([bottom,0,left]), self.attitude, True)
         img = self.img.crop((left, self.img.height-up, right, self.img.height-bottom))
-        return Data(img, gps_pos, self.attitude)
+        return RadarData(img, gps_pos, self.attitude)
     
     
