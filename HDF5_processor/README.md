@@ -9,3 +9,7 @@ run command line:
 
 2) Generate npy files: <br />
 `python HDF5_processor.py --task npy --dir radar_images_npy`
+
+### TODO
+1) Generate Video <br />
+2) Return Position and Attidude along witn images.
