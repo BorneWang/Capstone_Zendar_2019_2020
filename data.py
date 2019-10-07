@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Sep 29 16:36:34 2019
-
-@author: Pierre-Louis
-"""
 from PIL import Image, ImageDraw
 import numpy as np
 from copy import deepcopy
