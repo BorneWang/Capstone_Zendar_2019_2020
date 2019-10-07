@@ -5,41 +5,30 @@ from data import RadarData
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-def calculate_norm_log(image):
-    """ Calculate the log of the norm of an image with complex pixels """
-    row, col = image.shape
-    new_image = np.zeros((row,col))
-    for i in range(row):
-        new_image[i,:] = list(map(lambda x: np.linalg.norm((x['real'],x['imag'])), image[i,:]))
-    log_image = np.log(new_image)
-    return log_image
-
 class Reader:
     
     def __init__(self, src):
         self.src = src
         self.heatmaps = dict()
         self.load_heatmaps()
+        self.min_magnitude = 0;
+        self.max_magnitude = 0;
     
     def load_heatmaps(self):
-        """ Function to convert data to magnitude in HDF5 """
+        """ Function load rada data magnitude from HDF5 """
+        #TODO: preprocessing in HDF5 by Bowen
         hdf5 = h5py.File(self.src,'r+')
         aperture = hdf5['radar']['broad01']['aperture2D']
+        # TODO: load value for normalization
+        # self.min_magnitude =
+        # self.max_magnitude = 
         times = list(aperture.keys())
-        maxi = 0
         for i, t in enumerate(times):
-            heatmap = calculate_norm_log(aperture[t])
-            aperture[t][...] = heatmap
-#            self.heatmaps[float(t)] = RadarData(Image.fromarray(int(aperture[t]['real']*255), 'L'), aperture[t].attrs['POSITION'], aperture[t].attrs['ATTITUDE'])
-#           Image.fromarray(np.uint8(heatmap/np.max(heatmap)*255), 'L')           
-            if np.max(heatmap) > maxi:
-                maxi = np.max(heatmap)
-            print(str(i)+'/4000')
-        for t in enumerate(times):
-            aperture[t][...] = aperture[t][...]/maxi*255
+            heatmap = aperture[t];
+            self.heatmaps[float(t)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), aperture[t].attrs['POSITION'], aperture[t].attrs['ATTITUDE'])
         hdf5.close()
         
-    def play_video(self, t_ini, t_final):
+    def play_normalized_video(self, t_ini, t_final):
         """ Play a video of radar images between t_ini and t_final """
         times = self.find_timestamps(t_ini, t_final)
         images = []
@@ -67,7 +56,7 @@ class Reader:
             times = self.find_timestamps(t_ini, t_final)
             return np.array([self.heatmaps[t] for t in times])
             
-    def get_heatmap_img(self, t_ini, t_final=None):
+    def get_normalized_img(self, t_ini, t_final=None):
         """ Return radar data image for time between t_ini and t_final """
         if t_final is None:
             return self.heatmaps[t_ini].img
