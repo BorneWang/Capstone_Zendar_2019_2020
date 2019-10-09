@@ -4,20 +4,9 @@ from copy import deepcopy
 from scipy.spatial.transform import Rotation as rot
 
 def earth2flu(pos, q, inverse=False):
-    """ Change of frame from front-left-up to earth frame """
+    """ Change of frame from earth frame to front-left-up """
     quaternion = rot.from_quat(q)
     return quaternion.apply(pos, inverse)
-    
-def flu2fur(pos, inverse=False):
-    """ Change of frame from front-up-right to earth front-left-up """
-    return rot.from_quat(np.array([np.sqrt(2)/2,0,0,-np.sqrt(2)/2])).apply(pos, inverse)
-    
-def earth2fur(pos, q, inverse=False):
-    """ Change of frame from front-up-right to earth frame """
-    if inverse:
-        return earth2flu(flu2fur(pos, inverse), q, inverse)
-    else:
-        return flu2fur(earth2flu(pos, q))
 
 class RadarData:
     
@@ -49,7 +38,7 @@ class RadarData:
     def earth_grid(self):
         """ give the position of each pixel in the earthframe """
         img_grid = self.image_grid()
-        earth_grid = earth2fur(img_grid, self.attitude, True) + self.gps_pos
+        earth_grid = earth2flu(img_grid, self.attitude, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
         
     def circle(self):
@@ -85,26 +74,23 @@ class RadarData:
         """ Return the cropped data corresponding to the intersection of two datasets """ 
         proj_data = self.projection(other_data)
         
-        c = earth2fur(earth2fur(np.array([proj_data.height()/2, 0, proj_data.width()/2]), proj_data.attitude, True) + proj_data.gps_pos, other_data.attitude)
-
-        m = (c + np.array([other_data.height()/2, 0, other_data.width()/2]))/2
-        m1 = other_data.meters2indices(np.array([m[0], m[2]]))
-
-        m = earth2fur(earth2fur(m, other_data.attitude, True) - proj_data.gps_pos, proj_data.attitude)
-        m2 = proj_data.meters2indices(np.array([m[0], m[2]]))
+        c = earth2flu(earth2flu(np.array([proj_data.width()/2, proj_data.height()/2, 0]), proj_data.attitude, True) + proj_data.gps_pos, other_data.attitude)
         
-        r = min(min(min(m1), min(abs(m1-np.array([other_data.img.height, other_data.img.width])))), min(min(m2), min(abs(m2-np.array([proj_data.img.width, proj_data.img.height])))))
+        m = (c + np.array([other_data.width()/2, other_data.height()/2, 0]))/2
+        m1 = other_data.meters2indices(np.array([m[0], m[1]]))
+
+        m = earth2flu(earth2flu(m, other_data.attitude, True) - proj_data.gps_pos, proj_data.attitude)
+        m2 = proj_data.meters2indices(np.array([m[0], m[1]]))
         
-        data_1 = proj_data.crop(m2[1]-r, m2[0]+r, m2[1]+r, m2[0]-r)
-        data_2 = other_data.crop(m1[1]-r, m1[0]+r, m1[1]+r, m1[0]-r)
+        r = min(min(min(m1), min(abs(m1-np.array([other_data.img.width, other_data.img.height])))), min(min(m2), min(abs(m2-np.array([proj_data.img.width, proj_data.img.height])))))
+        
+        data_1 = proj_data.crop(m2[0]-r, m2[1]+r, m2[0]+r, m2[1]-r)
+        data_2 = other_data.crop(m1[0]-r, m1[1]+r, m1[0]+r, m1[1]-r)
         return data_1, data_2
-    
-    # TODO: rotate function (from the center)
     
     def crop(self, left, up, right, bottom):
         """ Return a crop of the actual data and its new absolute position and attitude """
-        #TODO: to be checked
-        gps_pos = self.gps_pos + earth2fur(self.precision*np.array([bottom,0,left]), self.attitude, True)
+        gps_pos = self.gps_pos + earth2flu(self.precision*np.array([bottom,left,0]), self.attitude, True)
         img = self.img.crop((left, self.img.height-up, right, self.img.height-bottom))
         return RadarData(img, gps_pos, self.attitude)
     

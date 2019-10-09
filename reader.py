@@ -24,7 +24,7 @@ class Reader:
         # self.max_magnitude = 
         times = list(aperture.keys())
         for i, t in enumerate(times):
-            heatmap = aperture[t];
+            heatmap = aperture[t][...];
             self.heatmaps[float(t)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), aperture[t].attrs['POSITION'], aperture[t].attrs['ATTITUDE'])
         hdf5.close()
         
