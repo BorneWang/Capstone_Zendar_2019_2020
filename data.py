@@ -1,20 +1,19 @@
-from PIL import Image, ImageDraw
+from PIL import Image
 import numpy as np
-from copy import deepcopy
 from scipy.spatial.transform import Rotation as rot
+import cv2
 
-def earth2flu(pos, q, inverse=False):
-    """ Change of frame from earth frame to front-left-up """
-    quaternion = rot.from_quat(q)
-    return quaternion.apply(pos, inverse)
+def check_transform(data, warp_matrix, name):
+    """ Save an image to vizualize the calculated transformation (for test purpose) """
+    Image.fromarray(cv2.warpAffine(np.array(data.img), warp_matrix, data.img.size, flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)).save(name);    
 
 class RadarData:
     
     def __init__(self, img, gps_pos, attitude, precision=0.04):
-        self.img = img
         self.precision = precision
-        self.gps_pos = gps_pos
-        self.attitude = attitude
+        self.img = img # PIL image  
+        self.gps_pos = gps_pos # 1x3 array
+        self.attitude = attitude # scipy quaternion
         
     def height(self):
         """ Return max y position of a pixel in image frame """
@@ -30,6 +29,10 @@ class RadarData:
         y_I = int(round(point[1]/self.precision))
         return x_I, y_I
     
+    def earth2flu(self,pos, inverse=False):
+        """ Change of frame from earth frame to front-left-up """
+        return self.attitude.apply(pos, inverse)
+    
     def image_grid(self):
         """ give the position of each pixel in the image frame """
         x, y = np.meshgrid(np.linspace(0, self.width(), self.img.width), np.linspace(self.height(), 0, self.img.height))
@@ -38,60 +41,59 @@ class RadarData:
     def earth_grid(self):
         """ give the position of each pixel in the earthframe """
         img_grid = self.image_grid()
-        earth_grid = earth2flu(img_grid, self.attitude, True) + self.gps_pos
+        earth_grid = self.earth2flu(img_grid, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
         
-    def circle(self):
-        """ Take only data in the biggest centered circle that can fit in the image """
-        alpha = Image.new('L', self.img.size,0)
-        draw = ImageDraw.Draw(alpha)
+    def predict_image(self, gps_pos, attitude):
+        """ Give the prediction of an observation in a different position based on actual radar image """
+        #TODO: 3D transformation of image (to take into account pitch and roll changes)
+        exp_rot = rot.as_rotvec(self.attitude.inv()*attitude)[2]
+        exp_rot_matrix = np.array([[np.cos(exp_rot), -np.sin(exp_rot)],[np.sin(exp_rot), np.cos(exp_rot)]])
         
-        l = min(self.img.width,self.img.height)
-        draw.pieslice([(self.img.width-l)/2,(self.img.height-l)/2, (self.img.width+l)/2, (self.img.height+l)/2],0,360,fill=255)
-        img = Image.fromarray(np.logical_and(np.array(alpha.convert('1')), np.array(self.img)).astype('uint8')*255).convert('1')
-        return RadarData(img, self.gps_pos, self.attitude)
-    
-    def distance(self, other_data):
-        """ Negative correlation between the two images, flattened to 1D """
-        img_array1 = np.array(self.img)
-        img_array2 = np.array(other_data.img)
-        correl = np.corrcoef(img_array1.ravel(), img_array2.ravel())[0, 1]
-        return -correl
-    
-    def projection(self, other_data):       
-        """ Project an image on an other image plane (x,y) """
-        rot_vec = (rot.from_quat(self.attitude).inv()*rot.from_quat(other_data.attitude)).as_rotvec()
-        proj_q = rot.from_rotvec(np.array([rot_vec[0], rot_vec[1], 0]))
-        R = proj_q.as_dcm()[0:2,0:2]
-        if np.array_equal(R, np.eye(2)):
-            return deepcopy(self)
-        else:
-            ru_point = R.dot(np.array([self.height(), self.width()]))
-            img = self.img.transform(other_data.meters2indices(ru_point), Image.AFFINE, [R[0,0], R[0,1], 0, R[1,0], R[1,1], 0])
-            return RadarData(img, self.gps_pos, rot.from_rotvec(np.array([0, 0, rot_vec[2]])).as_quat())
-    
-    def intersection(self, other_data):
-        """ Return the cropped data corresponding to the intersection of two datasets """ 
-        proj_data = self.projection(other_data)
+        h = np.array([0, self.height()/2])
+        exp_trans = self.earth2flu(gps_pos - self.gps_pos)[0:2]
+        corr_trans = (exp_trans - h + exp_rot_matrix.dot(h))/self.precision
         
-        c = earth2flu(earth2flu(np.array([proj_data.width()/2, proj_data.height()/2, 0]), proj_data.attitude, True) + proj_data.gps_pos, other_data.attitude)
+        warp_matrix = np.concatenate((exp_rot_matrix,np.array([[corr_trans[0]],[corr_trans[1]]])), axis = 1)
+        predict_img = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 0);
         
-        m = (c + np.array([other_data.width()/2, other_data.height()/2, 0]))/2
-        m1 = other_data.meters2indices(np.array([m[0], m[1]]))
-
-        m = earth2flu(earth2flu(m, other_data.attitude, True) - proj_data.gps_pos, proj_data.attitude)
-        m2 = proj_data.meters2indices(np.array([m[0], m[1]]))
+        mask = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 255);
+        diff = (mask - predict_img).astype(np.float16)
+        diff[diff == 255] = np.nan
+        prediction = diff + predict_img
+                
+        #TODO: just for test and vizualisation, could be removed()
+        Image.fromarray(predict_img).save('radar2_2.png')
         
-        r = min(min(min(m1), min(abs(m1-np.array([other_data.img.width, other_data.img.height])))), min(min(m2), min(abs(m2-np.array([proj_data.img.width, proj_data.img.height])))))
+        return prediction
+    
+    def transformation_from(self, otherdata):
+        """ Return the translation and the rotation based on the two radar images """
+        #TODO: 3D transformation of image (to take into account pitch and roll changes)
+        warp_mode = cv2.MOTION_EUCLIDEAN
+        number_of_iterations = 5000;
+        termination_eps = 1e-10;
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
+        warp_matrix = np.eye(2, 3, dtype=np.float32)
+        (cc, warp_matrix) = cv2.findTransformECC (np.array(otherdata.img), np.array(self.img), warp_matrix, warp_mode, criteria)
         
-        data_1 = proj_data.crop(m2[0]-r, m2[1]+r, m2[0]+r, m2[1]-r)
-        data_2 = other_data.crop(m1[0]-r, m1[1]+r, m1[0]+r, m1[1]-r)
-        return data_1, data_2
+        #TODO: just for test and vizualisation, could be removed()
+        check_transform(self, warp_matrix, 'radar1_1.png')
+        
+        h1 = np.array([0, otherdata.height()/2])
+        h2 = np.array([0, self.height()/2])
+        
+        img_trans = self.precision*np.array([warp_matrix[0,2], -warp_matrix[1,2]])
+        abs_trans = h1 + img_trans + warp_matrix[0:2,0:2].T.dot(-h2)
+        
+        rotation = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
+        translation = -np.array([abs_trans[0], abs_trans[1], 0])
+        return translation, rotation
     
-    def crop(self, left, up, right, bottom):
-        """ Return a crop of the actual data and its new absolute position and attitude """
-        gps_pos = self.gps_pos + earth2flu(self.precision*np.array([bottom,left,0]), self.attitude, True)
-        img = self.img.crop((left, self.img.height-up, right, self.img.height-bottom))
-        return RadarData(img, gps_pos, self.attitude)
-    
-    
+    def image_position_from(self, otherdata):
+        """ Return the actual position and attitude based on radar images comparison """
+        translation, rotation = self.transformation_to(otherdata)
+        
+        gps_pos = otherdata.gps_pos + translation
+        attitude = (self.attitude*rot.from_dcm(rotation)).as_quat()
+        return gps_pos, attitude
