@@ -1,9 +1,10 @@
-import numpy as np
 import h5py
+import numpy as np
 from PIL import Image
 from data import RadarData
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from scipy.spatial.transform import Rotation as rot
 
 class Reader:
     
@@ -25,7 +26,9 @@ class Reader:
         times = list(aperture.keys())
         for i, t in enumerate(times):
             heatmap = aperture[t][...];
-            self.heatmaps[float(t)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), aperture[t].attrs['POSITION'], aperture[t].attrs['ATTITUDE'])
+            gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
+            att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
+            self.heatmaps[float(t)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat([att[1],att[2],att[3],att[0]]))
         hdf5.close()
         
     def play_normalized_video(self, t_ini, t_final):
