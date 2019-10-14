@@ -21,8 +21,8 @@ class Reader:
         hdf5 = h5py.File(self.src,'r+')
         aperture = hdf5['radar']['broad01']['aperture2D']
         # TODO: load value for normalization
-        # self.min_magnitude =
-        # self.max_magnitude = 
+        self.min_magnitude = aperture.attrs['min_value']
+        self.max_magnitude = aperture.attrs['max_value']
         times = list(aperture.keys())
         for i, t in enumerate(times):
             heatmap = aperture[t][...];
