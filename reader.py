@@ -36,7 +36,7 @@ class Reader:
         times = self.find_timestamps(t_ini, t_final)
         images = []
         for t in times:
-            images.push(self.heatmaps[t].img)
+            images.append(self.heatmaps[t].img)
         fig = plt.figure()
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=True, repeat_delay=1000)
         plt.show()
@@ -48,7 +48,7 @@ class Reader:
         selection = []
         for t in times:
             if t>=t_ini and t<=t_final:
-                selection.push(t)
+                selection.append(t)
         return selection
     
     def get_radardata(self, t_ini, t_final=None):
