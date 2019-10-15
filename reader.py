@@ -20,7 +20,6 @@ class Reader:
         #TODO: preprocessing in HDF5 by Bowen
         hdf5 = h5py.File(self.src,'r+')
         aperture = hdf5['radar']['broad01']['aperture2D']
-        # TODO: load value for normalization
         self.min_magnitude = aperture.attrs['min_value']
         self.max_magnitude = aperture.attrs['max_value']
         times = list(aperture.keys())
@@ -28,15 +27,20 @@ class Reader:
             heatmap = aperture[t][...];
             gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
             att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-            self.heatmaps[float(t)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat([att[1],att[2],att[3],att[0]]))
+            self.heatmaps[float(t)-float(times[0])] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat([att[1],att[2],att[3],att[0]]))
         hdf5.close()
         
-    def play_normalized_video(self, t_ini, t_final):
+    def play_video(self, t_ini, t_final, grayscale = True):
         """ Play a video of radar images between t_ini and t_final """
+        # TODO: look Animation because problem with PIL
         times = self.find_timestamps(t_ini, t_final)
         images = []
         for t in times:
-            images.append(self.heatmaps[t].img)
+            plt.axis('off')
+            if grayscale:              
+                images.append(plt.imshow(self.heatmaps[t].img, cmap='gray', vmin=0, vmax=255))
+            else:
+                images.append(plt.imshow(self.heatmaps[t].img))
         fig = plt.figure()
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=True, repeat_delay=1000)
         plt.show()
@@ -59,7 +63,7 @@ class Reader:
             times = self.find_timestamps(t_ini, t_final)
             return np.array([self.heatmaps[t] for t in times])
             
-    def get_normalized_img(self, t_ini, t_final=None):
+    def get_img(self, t_ini, t_final=None):
         """ Return radar data image for time between t_ini and t_final """
         if t_final is None:
             return self.heatmaps[t_ini].img
