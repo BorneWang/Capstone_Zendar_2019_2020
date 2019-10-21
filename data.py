@@ -29,32 +29,30 @@ class RadarData:
         y_I = int(round(point[1]/self.precision))
         return x_I, y_I
     
-    def earth2flu(self,pos, inverse=False):
-        """ Change of frame from earth frame to front-left-up """
+    def earth2rbd(self,pos, inverse=False):
+        """ Change of frame from earth frame to right-backward-down """
         return self.attitude.apply(pos, inverse)
     
     def image_grid(self):
         """ give the position of each pixel in the image frame """
-        x, y = np.meshgrid(np.linspace(0, self.width(), self.img.width), np.linspace(self.height(), 0, self.img.height))
+        x, y = np.meshgrid(np.linspace(0, self.width(), self.img.width), np.linspace(0, self.height(), self.img.height))
         return np.dstack((x,np.zeros(np.shape(x)),y))
         
     def earth_grid(self):
         """ give the position of each pixel in the earthframe """
         img_grid = self.image_grid()
-        earth_grid = self.earth2flu(img_grid, True) + self.gps_pos
+        earth_grid = self.earth2rbd(img_grid, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
         
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        exp_rot = rot.as_rotvec(self.attitude.inv()*attitude)[2]
+        exp_rot = -rot.as_rotvec(self.attitude.inv()*attitude)[2]
         exp_rot_matrix = np.array([[np.cos(exp_rot), -np.sin(exp_rot)],[np.sin(exp_rot), np.cos(exp_rot)]])
         
-        h = np.array([0, self.height()/2])
-        exp_trans = self.earth2flu(gps_pos - self.gps_pos)[0:2]
-        corr_trans = (exp_trans - h + exp_rot_matrix.dot(h))/self.precision
+        exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
         
-        warp_matrix = np.concatenate((exp_rot_matrix,np.array([[corr_trans[0]],[corr_trans[1]]])), axis = 1)
+        warp_matrix = np.concatenate((exp_rot_matrix, np.array([[-exp_trans[0]],[-exp_trans[1]]])), axis = 1)
         predict_img = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 0);
         
         mask = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 255);
@@ -72,7 +70,7 @@ class RadarData:
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
         warp_mode = cv2.MOTION_EUCLIDEAN
         number_of_iterations = 5000;
-        termination_eps = 1e-10;
+        termination_eps = 1e-8;
         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
         warp_matrix = np.eye(2, 3, dtype=np.float32)
         (cc, warp_matrix) = cv2.findTransformECC (np.array(otherdata.img), np.array(self.img), warp_matrix, warp_mode, criteria)
@@ -80,15 +78,10 @@ class RadarData:
         #TODO: just for test and vizualisation, could be removed()
         check_transform(self, warp_matrix, 'radar1_1.png')
         
-        h1 = np.array([0, otherdata.height()/2])
-        h2 = np.array([0, self.height()/2])
-        
-        img_trans = self.precision*np.array([warp_matrix[0,2], -warp_matrix[1,2]])
-        abs_trans = h1 + img_trans + warp_matrix[0:2,0:2].T.dot(-h2)
-        
-        rotation = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
-        translation = -np.array([abs_trans[0], abs_trans[1], 0])
-        return translation, rotation
+        print(warp_matrix)
+        rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
+        translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
+        return translation, rot_matrix
     
     def image_position_from(self, otherdata):
         """ Return the actual position and attitude based on radar images comparison """
