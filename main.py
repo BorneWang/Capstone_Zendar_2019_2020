@@ -22,7 +22,7 @@ data2.img.save("radar2.png")
 
 # Expected transformation
 exp_trans = data1.earth2rbd(data2.gps_pos - data1.gps_pos)[0:2]
-exp_rot = -rot.as_rotvec(data1.attitude.inv()*data2.attitude)[2]
+exp_rot = rot.as_rotvec(data1.attitude.inv()*data2.attitude)[2]
 print("Expected translation: "+str(exp_trans))
 print("Expected rotation (rad): "+str(exp_rot))
 

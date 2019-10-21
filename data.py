@@ -47,7 +47,7 @@ class RadarData:
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        exp_rot = -rot.as_rotvec(self.attitude.inv()*attitude)[2]
+        exp_rot = rot.as_rotvec(self.attitude.inv()*attitude)[2]
         exp_rot_matrix = np.array([[np.cos(exp_rot), -np.sin(exp_rot)],[np.sin(exp_rot), np.cos(exp_rot)]])
         
         exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
@@ -78,7 +78,6 @@ class RadarData:
         #TODO: just for test and vizualisation, could be removed()
         check_transform(self, warp_matrix, 'radar1_1.png')
         
-        print(warp_matrix)
         rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
         translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
         return translation, rot_matrix
