@@ -8,14 +8,33 @@ from scipy.spatial.transform import Rotation as rot
 
 class Reader:
     
-    def __init__(self, src):
+    def __init__(self, src, option=None):
         self.src = src
         self.heatmaps = dict()
-        self.load_heatmaps()
+        self.load_heatmaps(option)
         self.min_magnitude = 0;
         self.max_magnitude = 0;
     
-    def load_heatmaps(self):
+    def unlog(self,image):
+        return np.exp(image)
+    
+    def combine_method(self,image):
+        img_255 = np.uint8(255*(image-self.min_magnitude)/(self.max_magnitude-self.min_magnitude))
+        fi = img_255 / 255.0
+        gamma = 0.57
+        out = np.power(fi, gamma)
+        img_gamma = 255.0*out
+        img_linear = 3.0 * img_gamma # Change this number (4.0, 3.0, 2.0)
+        img_linear[img_linear>255] = 255
+        img_linear = np.around(img_linear)
+        img_linear = img_linear.astype(np.uint8)
+        return img_linear
+        
+    def increase_contrast(self,image):
+        img = self.unlog(image)
+        return self.combine_method(img)
+    
+    def load_heatmaps(self, option):
         """ Function load rada data magnitude from HDF5 """
         #TODO: preprocessing in HDF5 by Bowen
         hdf5 = h5py.File(self.src,'r+')
@@ -25,14 +44,25 @@ class Reader:
         times = list(aperture.keys())
         N = len(times)
         prev_perc = -1
-        for i, t in enumerate(times):
-            if np.floor(float(i)*10/N) != prev_perc:
-                print("Loading data: "+str(np.floor(float(i)*100/N))+"%")
-                prev_perc = round(float(i)*10/N)
-            heatmap = aperture[t][...];
-            gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
-            att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-            self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat(att))
+        if option == 'increase_contrast':
+            for i, t in enumerate(times):
+                if np.floor(float(i)*10/N) != prev_perc:
+                    print("Loading data: "+str(np.floor(float(i)*100/N))+"%")
+                    prev_perc = round(float(i)*10/N)
+                heatmap = aperture[t][...];
+                heatmap = self.increase_contrast(heatmap)
+                gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
+                att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
+                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(heatmap, 'L'), gps_pos, rot.from_quat(att))
+        else:
+            for i, t in enumerate(times):
+                if np.floor(float(i)*10/N) != prev_perc:
+                    print("Loading data: "+str(np.floor(float(i)*100/N))+"%")
+                    prev_perc = round(float(i)*10/N)
+                heatmap = aperture[t][...];
+                gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
+                att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
+                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(heatmap, 'L'), gps_pos, rot.from_quat(att))  
         hdf5.close()
         print("Data loaded")
         
