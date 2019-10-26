@@ -62,7 +62,7 @@ class Reader:
                 heatmap = aperture[t][...];
                 gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
                 att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(heatmap, 'L'), gps_pos, rot.from_quat(att))  
+                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat(att))
         hdf5.close()
         print("Data loaded")
         
