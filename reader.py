@@ -1,41 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Oct  4 09:30:01 2019
-
-@author: Pierre-Louis
-"""
-
-import numpy as np
 import h5py
+import numpy as np
 from PIL import Image
 from data import RadarData
 import matplotlib.pyplot as plt
-
-def calculate_norm_log(image):
-    """ Calculate the log of the norm of an image with complex pixels """
-    row, col = image.shape
-    new_image = np.zeros((row,col))
-    for i in range(row):
-        new_image[i,:] = list(map(lambda x: np.linalg.norm((x['real'],x['imag'])), image[i,:]))
-    log_image = np.log(new_image)
-    return log_image
-
-def heatmap2img(heatmap):
-    """ Conversion of a heatmap into an image """
-    fig, ax = plt.subplots()
-    height, width = heatmap.shape 
-    plt.imshow(heatmap)
-    plt.axis('off')
-    height, width = heatmap.shape 
-    fig.set_size_inches(width/100.0/4.0, height/100.0/4.0) 
-    plt.gca().xaxis.set_major_locator(plt.NullLocator()) 
-    plt.gca().yaxis.set_major_locator(plt.NullLocator()) 
-    plt.subplots_adjust(top=1,bottom=0,left=0,right=1,hspace=0,wspace=0) 
-    plt.margins(0,0)
-
-    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    return Image.fromarray(data)
+import matplotlib.animation as animation
+from scipy.spatial.transform import Rotation as rot
 
 class Reader:
     
@@ -43,46 +12,82 @@ class Reader:
         self.src = src
         self.heatmaps = dict()
         self.load_heatmaps()
+        self.min_magnitude = 0;
+        self.max_magnitude = 0;
     
     def load_heatmaps(self):
-        """ Function to load heatmaps from HDF5 file (and format data to heatmaps if needed) """
-        hdf5 = h5py.File(self.src,'r')
-        aperture = self.hdf5['radar']['broad01']['aperture2D']
-        times = list(aperture.keys()).sort()
-        for t in times:
-            #check if data is already converted as a heatmap
-            #TODO: decide if RadarData should store image or heatmap
-            if isinstance(aperture[t][0,0], complex):
-                aperture[t][...] = calculate_norm_log(aperture[t])
-                self.heatmaps[t] = RadarData(heatmap2img(aperture[t]), aperture[t].attrs['position'], aperture[t].attrs['attitude'])
-            else:
-                self.heatmaps[t] = RadarData(heatmap2img(aperture[t]), aperture[t].attrs['position'], aperture[t].attrs['attitude'])
+        """ Function load rada data magnitude from HDF5 """
+        #TODO: preprocessing in HDF5 by Bowen
+        hdf5 = h5py.File(self.src,'r+')
+        aperture = hdf5['radar']['broad01']['aperture2D']
+        self.min_magnitude = aperture.attrs['min_value']
+        self.max_magnitude = aperture.attrs['max_value']
+        times = list(aperture.keys())
+        N = len(times)
+        prev_perc = -1
+        for i, t in enumerate(times):
+            if np.floor(float(i)*10/N) != prev_perc:
+                print("Loading data: "+str(np.floor(float(i)*100/N))+"%")
+                prev_perc = round(float(i)*10/N)
+            heatmap = aperture[t][...];
+            gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
+            att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
+            self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(np.uint8((heatmap-self.min_magnitude)/(self.max_magnitude-self.min_magnitude)*255), 'L'), gps_pos, rot.from_quat(att))
         hdf5.close()
+        print("Data loaded")
         
-    def play_video(self, t_ini, t_final):
-        # TODO: play a video with image between t_ini and t_final
-        return
-    
-    def find_timestamps(self, timestamp, timestamp_final):
-        times = self.heatmaps.keys.sort()
-        selection = []
+    def play_video(self, t_ini, t_final, grayscale = True):
+        """ Play a video of radar images between t_ini and t_final """
+        times = self.find_timestamps(t_ini, t_final)
+        images = []
         for t in times:
-            if t>=timestamp and t<=timestamp_final:
-                selection.push(t)
-        return selection
+            plt.axis('off')
+            if grayscale:              
+                images.append(plt.imshow(self.heatmaps[t].img, cmap='gray', vmin=0, vmax=255))
+            else:
+                images.append(plt.imshow(self.heatmaps[t].img))
+        fig = plt.figure()
+        ani = animation.ArtistAnimation(fig, images, interval=100, blit=True, repeat_delay=1000)
+        plt.show()
+        return ani
+     
+    def find_timestamps(self, t_ini, t_final=None):
+        """ Return a list of data timestamps between t_ini and t_final """
+        times = list(self.heatmaps.keys())
+        times.sort()
+        if t_final is None:
+            t_adj = times[min(range(len(times)), key = lambda i: abs(times[i]-t_ini))]
+            if t_adj != t_ini:       
+                print(t_adj)
+            return t_adj
+        else:    
+            selection = []
+            for t in times:
+                if t>=t_ini and t<=t_final:
+                    selection.append(t)
+            return selection
     
-    def get_radardata(self, timestamp, timestamp_final=None):
-        """ Return radar data for time between timestamp and timestamp_final """
-        if timestamp_final is None:
-            return self.heatmaps[timestamp]
+    def get_radardata(self, t_ini, t_final=None):
+        """ Return radar data for time between t_ini and t_final """
+        times = self.find_timestamps(t_ini, t_final)
+        if t_final is None:
+            return self.heatmaps[times]
         else:
-            times = self.find_timestamps(timestamp, timestamp_final)
+            times = self.find_timestamps(t_ini, t_final)
             return np.array([self.heatmaps[t] for t in times])
             
-    def get_heatmap_img(self, timestamp, timestamp_final=None):
-        """ Return radar data image for time between timestamp and timestamp_final """
-        if timestamp_final is None:
-            return self.heatmaps[timestamp].img
+    def get_img(self, t_ini, t_final=None):
+        """ Return radar data image for time between t_ini and t_final """
+        times = self.find_timestamps(t_ini, t_final)
+        if t_final is None:
+            return self.heatmaps[times].img
         else:
-            times = self.find_timestamps(timestamp, timestamp_final)
             return np.array([self.heatmaps[t].img for t in times])
+        
+    def get_gps_pos(self,t_ini, t_final=None):
+        """ Return GPS pos for time between t_ini and t_final """
+        times = self.find_timestamps(t_ini, t_final)
+        if t_final is None:
+            return self.heatmaps[times].gps_pos
+        else:
+            return np.array([self.heatmaps[t].gps_pos for t in times])
