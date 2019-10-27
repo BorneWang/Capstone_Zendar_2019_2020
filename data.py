@@ -1,11 +1,6 @@
-from PIL import Image
+import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as rot
-import cv2
-
-def check_transform(data, warp_matrix, name):
-    """ Save an image to vizualize the calculated transformation (for test purpose) """
-    Image.fromarray(cv2.warpAffine(np.array(data.img), warp_matrix, data.img.size, flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)).save(name);    
 
 class RadarData:
     
@@ -43,7 +38,29 @@ class RadarData:
         img_grid = self.image_grid()
         earth_grid = self.earth2rbd(img_grid, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
+    
+    def image_transformation_from(self, otherdata):
+        """ Return the translation and the rotation based on the two radar images """
+        #TODO: 3D transformation of image (to take into account pitch and roll changes)
+        warp_mode = cv2.MOTION_EUCLIDEAN
+        number_of_iterations = 1000;
+        termination_eps = 1e-8;
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
+        warp_matrix = np.eye(2, 3, dtype=np.float32)
+        (cc, warp_matrix) = cv2.findTransformECC (np.array(otherdata.img), np.array(self.img), warp_matrix, warp_mode, criteria)
         
+        rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
+        translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
+        return translation, rot.from_dcm(rot_matrix)
+    
+    def image_position_from(self, otherdata):
+        """ Return the actual position and attitude based on radar images comparison """
+        translation, rotation = self.transformation_to(otherdata)
+        
+        gps_pos = otherdata.gps_pos + self.earth2rbd(translation,True)
+        attitude = self.attitude*rotation
+        return gps_pos, attitude
+    
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
@@ -59,33 +76,5 @@ class RadarData:
         diff = (mask - predict_img).astype(np.float16)
         diff[diff == 255] = np.nan
         prediction = diff + predict_img
-                
-        #TODO: just for test and vizualisation, could be removed()
-        Image.fromarray(predict_img).save('radar2_2.png')
-        
+
         return prediction
-    
-    def transformation_from(self, otherdata):
-        """ Return the translation and the rotation based on the two radar images """
-        #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        warp_mode = cv2.MOTION_EUCLIDEAN
-        number_of_iterations = 5000;
-        termination_eps = 1e-8;
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-        warp_matrix = np.eye(2, 3, dtype=np.float32)
-        (cc, warp_matrix) = cv2.findTransformECC (np.array(otherdata.img), np.array(self.img), warp_matrix, warp_mode, criteria)
-        
-        #TODO: just for test and vizualisation, could be removed()
-        check_transform(self, warp_matrix, 'radar1_1.png')
-        
-        rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
-        translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
-        return translation, rot_matrix
-    
-    def image_position_from(self, otherdata):
-        """ Return the actual position and attitude based on radar images comparison """
-        translation, rotation = self.transformation_to(otherdata)
-        
-        gps_pos = otherdata.gps_pos + translation
-        attitude = (self.attitude*rot.from_dcm(rotation)).as_quat()
-        return gps_pos, attitude
