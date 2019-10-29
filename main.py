@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 
 
 # Loading data   
-reader = Reader('radardata.h5', 2, 100, option='increase_contrast')
+reader = Reader('radardata.h5', 4, 15, option='increase_contrast')
 
 # Creating Kalman filter for mapping
 kalman = Kalman_Mapper()
@@ -24,4 +24,5 @@ for ts, radardata in reader:
     
 # Plots
 recorder.export_map()
-recorder.plot_innovation()
+recorder.plot_innovation(True)
+recorder.plot_attitude()

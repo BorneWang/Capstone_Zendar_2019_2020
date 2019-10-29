@@ -4,7 +4,8 @@ from scipy.spatial.transform import Rotation as rot
 
 class RadarData:
     
-    def __init__(self, img, gps_pos, attitude, precision=0.04):
+    def __init__(self, ts, img, gps_pos, attitude, precision=0.04):
+        self.id = ts
         self.precision = precision
         self.img = img # PIL image  
         self.gps_pos = gps_pos # 1x3 array
@@ -64,8 +65,7 @@ class RadarData:
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        exp_rot = rot.as_rotvec(self.attitude.inv()*attitude)[2]
-        exp_rot_matrix = np.array([[np.cos(exp_rot), -np.sin(exp_rot)],[np.sin(exp_rot), np.cos(exp_rot)]])
+        exp_rot_matrix = rot.as_dcm(self.attitude.inv()*attitude)[:2,:2]
         
         exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
         

@@ -60,7 +60,7 @@ class Reader:
             if not np.sum(heatmap) == 0:
                 gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
                 att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(Image.fromarray(heatmap, 'L'), gps_pos, rot.from_quat(att))
+                self.heatmaps[round(float(t)-float(times[0]), 2)] = RadarData(float(t), Image.fromarray(heatmap, 'L'), gps_pos, rot.from_quat(att))
         hdf5.close()
         print("Data loaded")
         
@@ -76,16 +76,28 @@ class Reader:
         
     def play_video(self, t_ini=0, t_final=np.inf, grayscale = True):
         """ Play a video of radar images between t_ini and t_final """
+        anim_running = True
+        def onClick(event):
+            nonlocal anim_running
+            if anim_running:
+                ani.event_source.stop()
+                anim_running = False
+            else:
+                ani.event_source.start()
+                anim_running = True
+                    
         times = self.find_timestamps(t_ini, t_final)
         images = []
+        
+        fig = plt.figure()
         for t in times:
             plt.axis('off')
             if grayscale:              
-                images.append([plt.imshow(self.heatmaps[t].img, cmap='gray', vmin=0, vmax=255)])
+                images.append([plt.imshow(self.heatmaps[t].img, cmap='gray', vmin=0, vmax=255), plt.text(0.5,0.5,str(t))])
             else:
-                images.append([plt.imshow(self.heatmaps[t].img)])
-        fig = plt.figure()
-        ani = animation.ArtistAnimation(fig, images, interval=100, blit=True, repeat_delay=1000)
+                images.append([plt.imshow(self.heatmaps[t].img), plt.text(0.6,0.5,str(t))])
+        fig.canvas.mpl_connect('button_press_event', onClick)
+        ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         return ani
      
     def find_timestamps(self, t_ini, t_final=None):
@@ -129,4 +141,4 @@ class Reader:
         if t_final is None:
             return self.heatmaps[times].attitude
         else:
-            return np.array([self.heatmaps[t].attitude for t in times])
+            return [self.heatmaps[t].attitude for t in times]
