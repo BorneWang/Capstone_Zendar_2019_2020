@@ -71,8 +71,7 @@ class Reader:
         heatmap = (np.exp(heatmap)-np.exp(self.min_magnitude))/(np.exp(self.max_magnitude)-np.exp(self.min_magnitude))
         heatmap = np.power(heatmap, gamma)*255
         # thresholding between 10 and 11
-        heatmap = self.thresholding(heatmap, lin_coeff, 13)
-        heatmap[heatmap>255] = 255
+        heatmap = self.thresholding(heatmap, lin_coeff, 16.3)
         heatmap = heatmap.astype(np.uint8)
         return heatmap
     
@@ -81,7 +80,7 @@ class Reader:
         for i in range(row):
             for j in range(col):
                 if img[i,j] > thres:
-                    img[i,j] = lincoe*img[i,j] + 30
+                    img[i,j] = lincoe*img[i,j] + 60
         return img
         
     def play_video(self, t_ini=0, t_final=np.inf, grayscale = True):
