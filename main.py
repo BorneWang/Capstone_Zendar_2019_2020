@@ -8,12 +8,13 @@ warnings.filterwarnings("ignore")
 
 
 # Loading data   
-reader = Reader('radardata.h5', 4, 15, option='increase_contrast')
+reader = Reader('radardata.h5', 4, 30, option='increase_contrast')
 
 # Creating Kalman filter for mapping
 kalman = Kalman_Mapper()
 #TODO: decide more precisely covariances
-kalman.set_covariance(0.05, np.deg2rad(1), 0.05, np.deg2rad(1))
+kalman.set_covariance(0.05, np.deg2rad(1), 0.04, np.deg2rad(1))
+#kalman.set_covariance(0, 0, 900, 900)
 
 # Creating recorder 
 recorder = Recorder(reader, kalman)
@@ -24,5 +25,5 @@ for ts, radardata in reader:
     
 # Plots
 recorder.export_map()
-recorder.plot_innovation(True)
+recorder.plot_innovation()
 recorder.plot_attitude()
