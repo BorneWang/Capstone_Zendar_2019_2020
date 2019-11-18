@@ -95,7 +95,7 @@ class Reader:
                 ani.event_source.start()
                 anim_running = True
                     
-        times = self.find_timestamps(t_ini, t_final)
+        times = self.get_timestamps(t_ini, t_final)
         images = []
         
         fig = plt.figure()
@@ -109,7 +109,7 @@ class Reader:
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         return ani
      
-    def find_timestamps(self, t_ini, t_final=None):
+    def get_timestamps(self, t_ini, t_final=None):
         """ Return a list of data timestamps between t_ini and t_final """
         times = list(self.heatmaps.keys())
         times.sort()
@@ -121,7 +121,7 @@ class Reader:
     
     def plot_gps_evaluation(self):
         """ Evaluate the transformation given in data information compared to image analysis """ 
-        times = self.find_timestamps(0, np.inf)
+        times = self.get_timestamps(0, np.inf)
         pos_error = np.zeros(len(times)-1)
         att_error = np.zeros(len(times)-1)
         
@@ -133,7 +133,7 @@ class Reader:
             theta_cv = rotation_cv.as_euler('xyz')[2]
                 
             theta_gps = (prev_data.attitude.inv()*data.attitude).as_euler('xyz')[2]
-            trans_gps = data.earth2rbd(data.gps_pos - data.gps_pos)
+            trans_gps = data.earth2rbd(data.gps_pos - prev_data.gps_pos)
             
             pos_error[i-1] = np.sqrt((trans_gps - trans_cv).dot((trans_gps - trans_cv).T))
             att_error[i-1] = abs(theta_gps - theta_cv)
@@ -153,23 +153,25 @@ class Reader:
     
     def tracklog_translate(self, gps_positions, attitudes):
         """ Convert the position of the top left corner of image to car position """
-        car_pos = []
-        for i in range(len(gps_positions)):
-            car_pos.append(attitudes[i].apply(attitudes[i].apply(gps_positions[i]) - self.tracklog_translation, True))
-        return np.array(car_pos)
+        if gps_positions.ndim == 1:
+            return attitudes.apply(attitudes.apply(gps_positions) - self.tracklog_translation, True)
+        else:          
+            car_pos = []
+            for i in range(len(gps_positions)):
+                car_pos.append(attitudes[i].apply(attitudes[i].apply(gps_positions[i]) - self.tracklog_translation, True))
+            return np.array(car_pos)
     
     def get_radardata(self, t_ini, t_final=None):
         """ Return radar data for time between t_ini and t_final """
-        times = self.find_timestamps(t_ini, t_final)
+        times = self.get_timestamps(t_ini, t_final)
         if t_final is None:
             return self.heatmaps[times]
         else:
-            times = self.find_timestamps(t_ini, t_final)
             return np.array([self.heatmaps[t] for t in times])
             
     def get_img(self, t_ini, t_final=None):
         """ Return radar data image for time between t_ini and t_final """
-        times = self.find_timestamps(t_ini, t_final)
+        times = self.get_timestamps(t_ini, t_final)
         if t_final is None:
             return Image.fromarray(self.heatmaps[times].img)
         else:
@@ -177,7 +179,7 @@ class Reader:
         
     def get_gps_pos(self,t_ini, t_final=None):
         """ Return GPS position for time between t_ini and t_final """
-        times = self.find_timestamps(t_ini, t_final)
+        times = self.get_timestamps(t_ini, t_final)
         if t_final is None:
             return self.heatmaps[times].gps_pos
         else:
@@ -185,7 +187,7 @@ class Reader:
         
     def get_gps_att(self,t_ini, t_final=None):
         """ Return GPS attitude for time between t_ini and t_final """
-        times = self.find_timestamps(t_ini, t_final)
+        times = self.get_timestamps(t_ini, t_final)
         if t_final is None:
             return self.heatmaps[times].attitude
         else:

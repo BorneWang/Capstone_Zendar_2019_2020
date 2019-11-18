@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 
 
 # Loading data   
-reader = Reader('radardata.h5', 4, 30, option='increase_contrast')
+reader = Reader('radardata.h5', 6, 15, option='None')
 
 # Creating Kalman filter for mapping
 kalman = Kalman_Mapper()

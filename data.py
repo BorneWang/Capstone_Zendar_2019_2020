@@ -6,11 +6,11 @@ from PIL import Image
 from copy import deepcopy
 from scipy.spatial.transform import Rotation as rot
 
-def merge_img(img1, img2, P1, P2):
-    img = np.nan*np.ones(np.shape(img1))
-    cov_img = np.nan*np.ones(np.shape(img1))
-    for i in range(0, np.size(img1,0)):
-        for j in range(0, np.size(img1,1)):
+def merge_img(img1, img2, P1, P2, P_start, P_end):
+    img = deepcopy(img1)
+    cov_img = deepcopy(P1)
+    for i in range(max(0,P_start[1]), min(P_end[1], np.size(img1, 0))):
+        for j in range(max(0,P_start[0]), min(P_end[0], np.size(img1, 1))):
             if np.isnan(img1[i][j]):
                 img[i][j] = deepcopy(img2[i][j])
                 cov_img[i][j] = deepcopy(P2[i][j])
@@ -178,9 +178,10 @@ class Map(RadarData):
         shape = (int(np.ceil(y_length/self.precision)),int(np.ceil(x_length/self.precision)));
         
         img1 = np.nan*np.ones(shape)
-        img1[-v1[1]:np.size(self.img,0)-v1[1], -v1[0]:np.size(self.img,1)-v1[0]] = self.img
+        a = img1[-v1[1]:np.size(self.img,0)-v1[1], -v1[0]:np.size(self.img,1)-v1[0]]
+        img1[-v1[1]:np.size(self.img,0)-v1[1], -v1[0]:np.size(self.img,1)-v1[0]] = self.img[:np.size(a,0), :np.size(a,1)]
         cov_img1 = np.nan*np.ones(shape)
-        cov_img1[-v1[1]:np.size(self.covariance_map,0)-v1[1], -v1[0]:np.size(self.covariance_map,1)-v1[0]] = self.covariance_map
+        cov_img1[-v1[1]:np.size(self.covariance_map,0)-v1[1], -v1[0]:np.size(self.covariance_map,1)-v1[0]] = self.covariance_map[:np.size(a,0), :np.size(a,1)]
         
         v2 = (P5-new_origin[0:2])/self.precision
         M2 = np.concatenate((rot.as_dcm(self.attitude.inv()*otherdata.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
@@ -192,6 +193,12 @@ class Map(RadarData):
         img2 = diff + img2
         cov_img2 = diff + cov_img2
 
-        self.img, self.covariance_map = merge_img(img1, img2, cov_img1, cov_img2)
+        P9 = np.array([min(P5[0],P6[0],P7[0],P8[0]),min(P5[1],P6[1],P7[1],P8[1])])
+        P10 = np.array([max(P5[0],P6[0],P7[0],P8[0]),max(P5[1],P6[1],P7[1],P8[1])])
+            
+        P_start = np.floor((P9 - new_origin[0:2])/0.04).astype(np.int)
+        P_end = np.ceil((P10 - new_origin[0:2])/0.04).astype(np.int)
+
+        self.img, self.covariance_map = merge_img(img1, img2, cov_img1, cov_img2, P_start, P_end)
         self.gps_pos = deepcopy(new_gpspos)
         return self.get_img()

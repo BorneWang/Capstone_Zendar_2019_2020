@@ -6,11 +6,32 @@ import scipy.stats as stat
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
 
-def pos2coord(pos):
+def ecef2lla(pos):
+    """ Convert position in ECEF frame to LLA """
     ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
     lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
-    lon, lat, alt = pyproj.transform(ecef, lla, pos[:,0], pos[:,1], pos[:,2], radians=False)
+    if pos.ndim == 1:
+        lon, lat, alt = pyproj.transform(ecef, lla, pos[0], pos[1], pos[2], radians=False)
+    else:        
+        lon, lat, alt = pyproj.transform(ecef, lla, pos[:,0], pos[:,1], pos[:,2], radians=False)
     return np.array([lon, lat, alt]).T
+
+def ecef2enu(lat0, lon0):
+    """ Compute quaternion of transformation between ECEF to ENU frame """
+    MatNorthPole = np.array([[-1., 0., 0.],
+                           [0., -1., 0.],
+                           [ 0., 0. , 1.]])
+    sColat = np.sin(np.pi/2-lat0)
+    cColat = np.cos(np.pi/2-lat0)
+    MatLat = np.array([[ cColat , 0. , sColat ],
+                     [   0.   , 1. ,   0.   ],
+                     [-sColat , 0. , cColat ]])
+    sLon = np.sin(lon0)
+    cLon = np.cos(lon0)
+    Matlon = np.array([[ cLon , -sLon , 0. ],
+                     [ sLon , cLon  , 0. ],
+                     [  0.  ,  0.   , 1. ]])
+    return rot.from_dcm(np.array([[0,-1,0],[1,0,0],[0,0,1]]).dot(Matlon.dot(MatLat.dot(MatNorthPole)).T))
 
 class Recorder:
     
@@ -25,15 +46,15 @@ class Recorder:
     
     def export_map(self):
         """ Plot reference GPS on a Google map as well as measured position and filtered position """
-        coords = pos2coord(self.reader.tracklog_translate(self.reader.get_gps_pos(0,np.inf), self.reader.get_gps_att(0,np.inf)))
+        coords = ecef2lla(self.reader.tracklog_translate(self.reader.get_gps_pos(0,np.inf), self.reader.get_gps_att(0,np.inf)))
         gmap=gmplot.GoogleMapPlotter(np.mean(coords[:,1]), np.mean(coords[:,0]), 15)
         gmap.plot(coords[:,1], coords[:,0], 'green', edge_width = 2.5)
 
-        coords = pos2coord(self.reader.tracklog_translate(self.get_measured_positions(), self.get_measured_attitude()))
+        coords = ecef2lla(self.reader.tracklog_translate(self.get_measured_positions(), self.get_measured_attitude()))
         gmap.plot(coords[:,1], coords[:,0], 'red', edge_width = 2.5)
-
-        coords = pos2coord(self.reader.tracklog_translate(self.get_positions(), self.get_attitude()))
-        gmap.plot(coords[:,1], coords[:,0], 'cornflowerblue', edge_width = 2.5)
+        
+        #coords = ecef2lla(self.reader.tracklog_translate(self.get_positions(), self.get_attitude()))
+        #gmap.plot(coords[:,1], coords[:,0], 'cornflowerblue', edge_width = 2.5)
         
         #img_bounds = {}
         #img_bounds['west'] = (xmin - lon_midpt) * (grid_points / (grid_points - 1)) + lon_midpt
@@ -44,7 +65,24 @@ class Recorder:
         
         gmap.apikey = "AIzaSyB0UlIEiFl6IFtzz2_1WaDyYsXjscLVRWU"
         gmap.draw("map.html")
+    
+    def plot_trajectory(self):
+        """ Plot the trajectory in earth frame centered on initial position """
+        pos = self.reader.tracklog_translate(self.reader.get_gps_pos(0,np.inf), self.reader.get_gps_att(0,np.inf))
+        coord0 = ecef2lla(pos[0])
+        q = ecef2enu(coord0[1]*np.pi/180, coord0[0]*np.pi/180)
+        trajectory = q.apply(pos - pos[0])
         
+        arrows = np.array([q.apply(data.earth2rbd([0,-1,0], True)) for data in self.reader.get_radardata(0,np.inf)])
+        plt.figure()
+        plt.plot(trajectory[:,0], trajectory[:,1])
+        for i in range(0, len(arrows), 5):
+            plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])        
+        plt.xlabel('x_meters')
+        plt.ylabel('y_meters')
+        plt.axis('equal')
+        plt.show()
+    
     def plot_attitude(self):
         """ Plot the orientation in the map frame given by the GPS and after fusion """
         plt.figure()
@@ -78,7 +116,7 @@ class Recorder:
     def get_measured_attitude(self):
         """ Return attitude in first image frame obtained with cv2 transformations """
         measured_att = [self.kalman.mapdata.attitude]
-        times = self.reader.find_timestamps(0, np.inf)
+        times = self.reader.get_timestamps(0, np.inf)
         for i in range(1, len(times)):
             _, rotation = self.reader.get_radardata(times[i]).image_transformation_from(self.reader.get_radardata(times[i-1]))
             measured_att.append(measured_att[-1]*rotation)
@@ -88,7 +126,7 @@ class Recorder:
         """ Return positions obtained with cv2 transformations """
         measured_pos = [self.kalman.mapdata.gps_pos]
         measured_att = [self.kalman.mapdata.attitude]
-        times = self.reader.find_timestamps(0, np.inf)
+        times = self.reader.get_timestamps(0, np.inf)
         for i in range(1, len(times)):
             translation, rotation = self.reader.get_radardata(times[i]).image_transformation_from(self.reader.get_radardata(times[i-1]))
             measured_pos.append(measured_pos[-1] + measured_att[-1].apply(translation, True))

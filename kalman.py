@@ -74,7 +74,7 @@ class Kalman_Mapper:
             self.attitude = deepcopy(self.mapdata.attitude)
         else: 
             self.predict(new_data)
-            self.update(new_data)
-            
+            #self.update(new_data)
+
             self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)
             self.mapdata.add_data(self.last_data)
