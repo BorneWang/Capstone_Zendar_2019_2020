@@ -8,7 +8,8 @@ warnings.filterwarnings("ignore")
 
 
 # Loading data   
-reader = Reader('radardata.h5', 6, 15, option='None')
+# reader = Reader('radardata2.h5', 0, 70)
+reader = Reader('radardata2.h5', 5, 10)
 
 # Creating Kalman filter for mapping
 kalman = Kalman_Mapper()
@@ -22,8 +23,11 @@ recorder = Recorder(reader, kalman)
 for ts, radardata in reader:
     kalman.add(radardata)
     recorder.record(ts)
-    
+
+# Extracting map after fusion
+m = kalman.mapdata
+
 # Plots
 recorder.export_map()
-recorder.plot_innovation()
-recorder.plot_attitude()
+#recorder.plot_innovation()
+#recorder.plot_attitude()
