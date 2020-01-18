@@ -60,6 +60,10 @@ class Map():
             self.gps_pos = deepcopy(radardata.gps_pos) 
             self.attitude = deepcopy(radardata.attitude)
 
+    def set_img_covariance(self, cov):
+        """ Set the covariance of an image added to the map """
+        self.img_cov = cov
+
     def build_partial_map(self, otherdata):
         """ Build partial map of the chunks that are needed to contain the new data """
         hdf5 = h5py.File(self.map_name,'a')
@@ -93,6 +97,7 @@ class Map():
         return img, cov_img, gps_pos, P9, P10
     
     def update_map(self, img, cov_img, pos):
+        """ Updating part of the map with a given image """
         hdf5 = h5py.File(self.map_name,'a')
         map_hdf5 = hdf5["map"]
         cov_map_hdf5 = hdf5["covariance"]
@@ -105,7 +110,7 @@ class Map():
         hdf5.close()
                 
     def add_data(self,otherdata):
-        """ Add a radardata to the map """
+        """ Fusionning a new radardata with part of the map """
         img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(otherdata)
         
         shape = np.shape(img1)
@@ -126,54 +131,59 @@ class Map():
         self.update_map(img, cov_img, new_origin)
         
     def show(self):
-        hdf5 = h5py.File(self.map_name,'a')
-        map_hdf5 = hdf5["map"]
+        """ Show a matplotlib representation of the map """
+        # Parameter for the map display
+        speed_trans = 20
+        speed_scroll = 0.1
+        shape = (1000, 2000)
         
-        pos_x = 0
-        pos_y = 0   
+        scale = 1
+        pos = np.array([0,0,0])
         def press(event):
-            nonlocal pos_x
-            nonlocal pos_y
+            nonlocal pos
             nonlocal im
             nonlocal t
-            hdf5 = h5py.File(self.map_name,'a')
-            map_hdf5 = hdf5["map"]
             if event.key == 'left':
-                if str(pos_y)+"/"+str(pos_x-1) in map_hdf5:
-                    pos_x = pos_x -1
+                pos = pos - np.array([speed_trans*self.precision,0,0])
             elif event.key == 'right':
-                if str(pos_y)+"/"+str(pos_x+1) in map_hdf5:
-                    pos_x = pos_x +1
+                pos = pos + np.array([speed_trans*self.precision,0,0])
             elif event.key == 'up':
-                if str(pos_y-1)+"/"+str(pos_x) in map_hdf5:
-                    pos_y = pos_y -1
+                pos = pos - np.array([0,speed_trans*self.precision,0])
             elif event.key == 'down':               
-                if str(pos_y+1)+"/"+str(pos_x) in map_hdf5:
-                    pos_y = pos_y +1
-            im.set_data(np.nan_to_num(map_hdf5[str(pos_y)+"/"+str(pos_x)]))
-            t.set_text(str(pos_y)+"/"+str(pos_x))
+                pos = pos + np.array([0,speed_trans*self.precision,0])
+            img, _ = self.extract_from_map(self.gps_pos+self.attitude.apply(pos,True), self.attitude, shape, scale)
+            im.set_data(np.nan_to_num(img))
+            t.set_text(str(round(pos[0],2))+" ; "+ str(round(pos[1],2)))
             plt.draw()
-            hdf5.close()
             
-        fig = plt.figure()
+        def scroll(event):
+            nonlocal scale
+            if event.step != 0:
+                scale = scale + speed_scroll*event.step
+            img, _ = self.extract_from_map(self.gps_pos+self.attitude.apply(pos,True), self.attitude, shape, scale)
+            im.set_data(np.nan_to_num(img))
+            plt.draw()
+            
+        fig = plt.figure(facecolor=(1,1,1))
         fig.canvas.mpl_connect('key_press_event', press)
-        im = plt.imshow(np.nan_to_num(map_hdf5[str(pos_y)+"/"+str(pos_x)]), cmap='gray', vmin=0, vmax=255)
-        t = plt.text(0.6,0.5,str(pos_y)+"/"+str(pos_x))
-        plt.axis('off')
+        fig.canvas.mpl_connect('scroll_event', scroll)
+        ax = plt.axes()
+        ax.set_facecolor("black")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        img, _ = self.extract_from_map(self.gps_pos, self.attitude, shape, scale)
+        im = ax.imshow(np.nan_to_num(img), cmap='gray', vmin=0, vmax=255)
+        t = ax.text(0,0,str(round(pos[0],2))+" ; "+ str(round(pos[1],2)), color='black', horizontalalignment='left', verticalalignment='top',  transform=ax.transAxes)
         plt.show()
-        hdf5.close()
         
-    def extract_from_map(self, gps_pos, attitude, shape):
-        data_temp = RadarData(0, np.ones(shape), gps_pos, attitude.inv(), self.precision)
-        img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(data_temp)
+    def extract_from_map(self, gps_pos, attitude, shape, scale=1):
+        """ Return an image from the map for a given position and attitude and with a given shape """
+        data_temp = RadarData(0, np.ones((int(np.ceil(shape[0]/scale)), int(np.ceil(shape[1]/scale)))), gps_pos, attitude, self.precision)
+        img1, cov_img1, new_origin, _, _ = self.build_partial_map(data_temp)
 
-        P_start = np.floor((P9 - self.attitude.apply(new_origin - gps_pos)[0:2])/self.precision).astype(np.int)
-        M2 = np.concatenate((rot.as_dcm(attitude.inv()*self.attitude)[:2,:2],np.array([[-P_start[0]],[-P_start[1]]])), axis = 1)
+        P_start = self.attitude.apply(new_origin - gps_pos)[0:2]/self.precision
+        M2 = np.concatenate((rot.as_dcm(attitude.inv()*self.attitude)[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
+        M2 = scale*np.eye(2).dot(M2)
         img2 = cv2.warpAffine(img1, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         cov_img2 = cv2.warpAffine(cov_img1, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
-        mask = cv2.warpAffine(np.ones(shape), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0);
-        diff = mask - np.ones(shape)
-        diff[diff != 0] = np.nan
-        img2 = diff + img2
-        cov_img2 = diff + cov_img2
         return img2, cov_img2
