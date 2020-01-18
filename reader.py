@@ -42,10 +42,27 @@ class Reader:
     def load_heatmaps(self, t_ini=0, t_final=np.inf, option=None):
         """ Function load radar data magnitude from HDF5 between t_ini and"""
         hdf5 = h5py.File(self.src,'r+')
+        
+        aperture_gt = hdf5['radar']['broad01']
         aperture = hdf5['radar']['broad01']['aperture2D']
-        self.tracklog_translation = aperture.attrs['tracklog_translation']
         times = list(aperture.keys())
-        times = [times[i] for i in range(len(times)) if float(times[i])-float(times[0])>t_ini and float(times[i])-float(times[0])<t_final]
+        if "groundtruth" in aperture_gt:
+            print("Loading groundtruth")
+            aperture_gt = hdf5['radar']['broad01']['groundtruth']
+            self.groundtruth = {"POSITION":[], "ATTITUDE":[], "TIME":[]}
+            self.groundtruth_translation = aperture_gt.attrs['tracklog_translation']
+            times_gt = list(aperture_gt.keys())
+            t0 = float(times_gt[0])
+            times_gt = [times_gt[i] for i in range(len(times_gt)) if float(times_gt[i])-t0>=t_ini and float(times_gt[i])-t0<t_final]
+            for i, t in enumerate(times_gt):
+                self.groundtruth["POSITION"].append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
+                self.groundtruth["ATTITUDE"].append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
+                self.groundtruth["TIME"].append(float(t)-float(times_gt[0]))
+            t_final = t_ini + self.groundtruth["TIME"][-1]
+        else:
+            t0 = float(times[0])
+            
+        times = [times[i] for i in range(len(times)) if float(times[i])-t0>t_ini and float(times[i])-t0<t_final]
         N = len(times)
         prev_perc = -1
         for i, t in enumerate(times):
@@ -57,19 +74,8 @@ class Reader:
                 gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
                 att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
                 self.heatmaps[float(t)-float(times[0])] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
-        
-        aperture = hdf5['radar']['broad01']
-        if "groundtruth" in aperture:
-            aperture = hdf5['radar']['broad01']['groundtruth']
-            self.groundtruth_translation = aperture.attrs['tracklog_translation']
-            self.groundtruth = {"POSITION":[], "ATTITUDE":[], "TIME":[]}
-            times = list(aperture.keys())
-            times = [times[i] for i in range(len(times)) if float(times[i])-float(times[0])>=t_ini and float(times[i])-float(times[0])<t_final]
-            for i, t in enumerate(times):
-                self.groundtruth["POSITION"].append(np.array(list(aperture[t].attrs['POSITION'][0])))
-                self.groundtruth["ATTITUDE"].append(rot.from_quat(np.array(list(aperture[t].attrs['ATTITUDE'][0]))))
-                self.groundtruth["TIME"].append(float(t)-float(times[0]))
-        
+        self.tracklog_translation = aperture.attrs['tracklog_translation']
+                
         hdf5.close()
         print("Data loaded")
         
@@ -156,23 +162,29 @@ class Reader:
             
         plt.figure()
         if hasattr(self,"groundtruth"):
+            print("Average GPS translation error (m): " + str(np.mean(pos_error_gps)))
+            print("Average cv2 translation error (m): " + str(np.mean(pos_error_cv2)))
             plt.title("Square root error of GPS and CV2 translations with groundtruth")
             plt.plot(times[1:], pos_error_gps, label="GPS")
             plt.plot(times[1:], pos_error_cv2, label="CV2")
             plt.legend()
         else:
             plt.title("Square root error between GPS and CV2 translations")
+            print("Average GPS translation error (m): " + np.mean(pos_error))
             plt.plot(times[1:], pos_error)
         plt.xlabel("Time (s)")
         plt.ylabel("Error (m)")
 
         plt.figure()
         if hasattr(self,"groundtruth"):
+            print("Average GPS rotation error (rad): " + str(np.mean(att_error_gps)))
+            print("Average cv2 rotation error (rad): " + str(np.mean(att_error_cv2)))
             plt.title("Error of GPS and CV2 rotations with groundtruth")
             plt.plot(times[1:], att_error_gps, label="GPS")
             plt.plot(times[1:], att_error_cv2, label="CV2")
             plt.legend()
         else:
+            print("Average GPS rotation error (rad): " + str(np.mean(att_error)))
             plt.title("Error between GPS and CV2 rotations")
             plt.plot(times[1:], att_error)   
         plt.xlabel("Time (s)")
