@@ -8,8 +8,7 @@ warnings.filterwarnings("ignore")
 
 
 # Loading data   
-# reader = Reader('radardata2.h5', 0, 70)
-reader = Reader('radardata2.h5', 5, 10)
+reader = Reader('radardata2.h5', 6, 15)
 
 # Creating Kalman filter for mapping
 kalman = Kalman_Mapper()
@@ -17,12 +16,19 @@ kalman = Kalman_Mapper()
 kalman.set_covariance(0.05, np.deg2rad(1), 0.04, np.deg2rad(1))
 #kalman.set_covariance(0, 0, 900, 900)
 
+# show the map during mapping
+kalman.mapdata.show()
+
 # Creating recorder 
 recorder = Recorder(reader, kalman)
 
 for ts, radardata in reader:
-    kalman.add(radardata)
+    # add a new image
+    pos, att = kalman.add(radardata)
+    # save Kalman output
     recorder.record(ts)
+    # update the map during mapping
+    kalman.mapdata.show(pos)
 
 # Extracting map after fusion
 m = kalman.mapdata

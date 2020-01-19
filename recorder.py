@@ -52,7 +52,7 @@ class Recorder:
          
     def record(self, ts):
         """ Record value in a kalmans dictionary for later use """
-        self.kalman_record[ts] = deepcopy(self.kalman)
+        self.kalman_record[ts] = {'attitude': self.kalman.attitude, 'position': self.kalman.position, 'innovation': self.kalman.innovation}
     
     def export_map(self):
         """ Plot reference GPS on a Google map as well as measured position and filtered position """
@@ -128,7 +128,7 @@ class Recorder:
             plt.plot(self.reader.groundtruth["TIME"],np.unwrap([r.as_euler('zxy')[0] for r in self.reader.groundtruth["ATTITUDE"]]), label="Groundtruth")
         plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.reader.get_gps_att()]), label="GPS")
         plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.get_measured_attitude()]), label="CV2")
-        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([kalman.attitude.as_euler('zxy')[0] for kalman in self.kalman_record.values()])), label="Kalman")
+        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([kalman['attitude'].as_euler('zxy')[0] for kalman in self.kalman_record.values()])), label="Kalman")
         plt.legend()    
         
     def plot_innovation(self, individual=False, p=0.99):
@@ -137,18 +137,18 @@ class Recorder:
         plt.title("Innovation in function of time")
         plt.xlabel("Time (s)")
         if individual:
-            innovation = [kalman.innovation for kalman in list(self.kalman_record.values())[1:]]
+            innovation = [kalman['innovation'] for kalman in list(self.kalman_record.values())[1:]]
             plt.plot(list(self.kalman_record.keys())[1:], [np.array([Z[0]**2/S[0,0],Z[1]**2/S[1,1],Z[2]**2/S[2,2]])/stat.chi2.ppf(p, df=1) for Z,S in innovation])
         else:
-            plt.plot(list(self.kalman_record.keys())[1:], [kalman.innovation[0].dot(np.linalg.inv(kalman.innovation[1])).dot(kalman.innovation[0])/stat.chi2.ppf(p, df=len(kalman.innovation[0])) for kalman in list(self.kalman_record.values())[1:]])
+            plt.plot(list(self.kalman_record.keys())[1:], [kalman['innovation'][0].dot(np.linalg.inv(kalman['innovation'][1])).dot(kalman['innovation'][0])/stat.chi2.ppf(p, df=len(kalman['innovation'][0])) for kalman in list(self.kalman_record.values())[1:]])
         
     def get_positions(self):
         """ Return positions after fusion """
-        return np.array([kalman.position for kalman in self.kalman_record.values()])  
+        return np.array([kalman['position'] for kalman in self.kalman_record.values()])  
 
     def get_attitude(self):
         """ Return attitude after fusion """
-        return np.ravel([kalman.attitude for kalman in self.kalman_record.values()])  
+        return np.ravel([kalman['attitude'] for kalman in self.kalman_record.values()])  
 
     def get_measured_attitude(self):
         """ Return attitude in first image frame obtained with cv2 transformations """

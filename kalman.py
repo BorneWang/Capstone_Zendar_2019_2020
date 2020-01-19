@@ -1,7 +1,7 @@
 import numpy as np
+from map import Map
 from copy import deepcopy
 from data import RadarData
-from map import Map
 from scipy.spatial.transform import Rotation as rot
 
 def skew(v):
@@ -9,15 +9,15 @@ def skew(v):
 
 class Kalman_Mapper:
     
-    def __init__(self):          
-        self.mapdata = None
-        #TODO: add covariance map
+    def __init__(self, name = None):          
+        self.mapdata = Map(name)
+        self.last_data = None
+        self.innovation = None
         
         self.prev_position = np.zeros(3)
         self.prev_attitude = rot.from_quat([0,0,1,0])
         self.position = np.zeros(3)
         self.attitude = rot.from_quat([0,0,1,0])
-        #TODO: set covariance default
         
     def set_covariance(self, gps_std, orientation_std, cv2_trans_std, cv2_att_std):
         """ Set covariance of the Kalman Filter """
@@ -69,8 +69,8 @@ class Kalman_Mapper:
         
     def add(self, new_data):
         """ Add a new radar data on the map """
-        if self.mapdata is None:
-            self.mapdata = Map(deepcopy(new_data))
+        if self.last_data is None:
+            self.mapdata.add_data(new_data)
             self.last_data = deepcopy(new_data)
             self.position = deepcopy(self.mapdata.gps_pos)
             self.attitude = deepcopy(self.mapdata.attitude)
@@ -80,3 +80,4 @@ class Kalman_Mapper:
 
             self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)
             self.mapdata.add_data(self.last_data)
+        return deepcopy(self.position), deepcopy(self.attitude)
