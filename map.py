@@ -24,6 +24,13 @@ def merge_img(img1, img2, P1, P2, P_start, P_end):
                 cov_img[i][j] = P1[i][j]*P2[i][j]/(P1[i][j] + P2[i][j])
     return img, cov_img
 
+def increase_saturation(img):
+    sat = 1.7
+    gamma = 1.2
+    im = np.power(img/(255/sat), gamma)*255
+    im[im >= 255] = 255
+    return im
+
 class Map():
     
     def __init__(self, name = None):
@@ -146,9 +153,10 @@ class Map():
     def show(self, gps_pos = None):
         """ Show a matplotlib representation of the map """
         # Parameter for the map display
-        speed_trans = 20
+        speed_trans = 50
         speed_scroll = 0.1
         shape = (1000, 2000)
+        scroll_limit = 0.4
         
         if gps_pos is None:
             self.display['gps_pos'] = deepcopy(self.gps_pos)
@@ -157,24 +165,30 @@ class Map():
         
         def press(event):
             if event.key == 'left':
-                self.display['pos'] = self.display['pos'] - np.array([speed_trans*self.precision,0,0])
+                self.display['pos'] = self.display['pos'] - np.array([self.display['scale']*speed_trans*self.precision,0,0])
             elif event.key == 'right':
-                self.display['pos'] = self.display['pos'] + np.array([speed_trans*self.precision,0,0])
+                self.display['pos'] = self.display['pos'] + np.array([self.display['scale']*speed_trans*self.precision,0,0])
             elif event.key == 'up':
-                self.display['pos'] = self.display['pos'] - np.array([0,speed_trans*self.precision,0])
+                self.display['pos'] = self.display['pos'] - np.array([0,self.display['scale']*speed_trans*self.precision,0])
             elif event.key == 'down':               
-                self.display['pos'] = self.display['pos'] + np.array([0,speed_trans*self.precision,0])
+                self.display['pos'] = self.display['pos'] + np.array([0,self.display['scale']*speed_trans*self.precision,0])
             img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
-            self.display['img'].set_data(np.nan_to_num(img))
+            self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
             self.display['text'].set_text(str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)))
             plt.draw()
             
         def scroll(event):
             if event.step != 0:
-                self.display['scale'] = self.display['scale'] + speed_scroll*event.step
+                if self.display['scale'] - speed_scroll*event.step > scroll_limit:     
+                    self.display['scale'] = self.display['scale'] - speed_scroll*event.step
+                else:
+                    self.display['scale'] = scroll_limit
             img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
-            self.display['img'].set_data(np.nan_to_num(img))
+            self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
             plt.draw()
+            
+        def close(event):
+            self.display['fig'] = None
                  
         missing = (self.display['fig'] is None)
         if missing: 
@@ -184,6 +198,7 @@ class Map():
             self.display['fig'] = plt.figure(num=self.map_name, facecolor=(1,1,1))
             self.display['fig'].canvas.mpl_connect('key_press_event', press)
             self.display['fig'].canvas.mpl_connect('scroll_event', scroll)
+            self.display['fig'].canvas.mpl_connect('close_event', close)
             self.display['axes'] = plt.axes()
             self.display['axes'].set_facecolor("black")
             self.display['axes'].get_xaxis().set_visible(False)
@@ -192,7 +207,7 @@ class Map():
                 img = np.nan*np.ones(shape)
             else:
                 img, _ = self.extract_from_map(self.display['gps_pos'], self.attitude, shape, self.display['scale'])
-            self.display['img'] = self.display['axes'].imshow(np.nan_to_num(img), cmap='gray', vmin=0, vmax=255)
+            self.display['img'] = self.display['axes'].imshow(increase_saturation(np.nan_to_num(img)), cmap='gray', vmin=0, vmax=255)
             self.display['text'] = self.display['axes'].text(0,0,str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)), color='black', horizontalalignment='left', verticalalignment='top',  transform= self.display['axes'].transAxes)
             plt.show()
         else:
@@ -200,7 +215,7 @@ class Map():
                 img = np.nan*np.ones(shape)
             else:
                 img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
-            self.display['img'].set_data(np.nan_to_num(img))
+            self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
             self.display['text'].set_text(str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)))
             plt.draw()
             plt.pause(0.001)
