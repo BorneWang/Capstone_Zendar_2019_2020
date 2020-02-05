@@ -132,10 +132,10 @@ class Map():
             self.init_map(otherdata)
         
         img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(otherdata)
-        
         shape = np.shape(img1)
         v2 = self.attitude.apply(otherdata.gps_pos - new_origin)[0:2]/self.precision
-        M2 = np.concatenate((rot.as_dcm(self.attitude.inv()*otherdata.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
+        # M2 = np.concatenate((rot.as_dcm(self.attitude.inv()*otherdata.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
+        M2 = np.concatenate((rot.as_dcm(otherdata.attitude.inv()*self.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
         img2 = cv2.warpAffine(otherdata.img, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         cov_img2 = cv2.warpAffine(self.img_cov*np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         mask = cv2.warpAffine(np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0);
@@ -149,6 +149,7 @@ class Map():
 
         img, cov_img = merge_img(img1, img2, cov_img1, cov_img2, P_start, P_end)
         self.update_map(img, cov_img, new_origin)
+        return img1, img2, v2
         
     def show(self, gps_pos = None):
         """ Show a matplotlib representation of the map """
