@@ -1,7 +1,6 @@
 import gmplot
 import pyproj
 import numpy as np
-from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
@@ -70,7 +69,7 @@ class Recorder:
         gmap.plot(coords[:,1], coords[:,0], 'red', edge_width = 2.5)
         
         if len(self.get_positions())!=0:
-            coords = ecef2lla(rbd_translate(self.get_positions(), self.get_attitude(), self.reader.tracklog_translation))
+            coords = ecef2lla(rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation))
             gmap.plot(coords[:,1], coords[:,0], 'cornflowerblue', edge_width = 2.5)
             
         #img_bounds = {}
@@ -83,15 +82,15 @@ class Recorder:
         gmap.apikey = "AIzaSyB0UlIEiFl6IFtzz2_1WaDyYsXjscLVRWU"
         gmap.draw("map.html")
     
-    def plot_trajectory(self, arrow=True):
+    def plot_trajectory(self, arrow=False):
         """ Plot the trajectory in earth frame centered on initial position """
-        plt.figure()
+        fig = plt.figure()
         if hasattr(self.reader,"groundtruth"):
             pos = rbd_translate(np.array(self.reader.groundtruth["POSITION"]), self.reader.groundtruth["ATTITUDE"], self.reader.groundtruth_translation)
             coord0 = ecef2lla(pos[0])
             q = ecef2enu(coord0[1]*np.pi/180, coord0[0]*np.pi/180)
             trajectory = q.apply(pos - pos[0])   
-            plt.plot(trajectory[:,0], trajectory[:,1], 'black', label="Groundtruth")
+            plt.plot(trajectory[:,0], trajectory[:,1], 'black', label="Groundtruth", picker=True)
         else:
             pos = rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation)
             coord0 = ecef2lla(pos[0])
@@ -99,7 +98,7 @@ class Recorder:
           
         pos = rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation)
         trajectory = q.apply(pos - pos[0])       
-        plt.plot(trajectory[:,0], trajectory[:,1], 'g', label="GPS")
+        plt.plot(trajectory[:,0], trajectory[:,1], 'g', label="GPS", picker=True)
         if arrow:
             arrows = np.array([q.apply(data.earth2rbd([0,-1,0], True)) for data in self.reader.get_radardata()])
             for i in range(0, len(arrows), 5):
@@ -107,16 +106,29 @@ class Recorder:
         
         pos = rbd_translate(self.get_measured_positions(), self.get_measured_attitude(), self.reader.tracklog_translation)
         trajectory = q.apply(pos - pos[0])        
-        plt.plot(trajectory[:,0], trajectory[:,1], 'r', label="CV2")
+        plt.plot(trajectory[:,0], trajectory[:,1], 'r', label="CV2", picker=True)
         if arrow:
             arrows = np.array([q.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
             for i in range(0, len(arrows), 5):
                 plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
-            
-        plt.xlabel('x_meters')
-        plt.ylabel('y_meters')
+        
+        if len(self.get_positions())!=0:
+            pos = rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation)
+            trajectory = q.apply(pos - pos[0])        
+            plt.plot(trajectory[:,0], trajectory[:,1], 'cornflowerblue', label="Output", picker=True)
+            if arrow:
+                arrows = np.array([q.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
+                for i in range(0, len(arrows), 5):
+                    plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
+    
+        def show_timestamp(event):
+            print(round(self.reader.get_timestamps()[event.ind[0]],2)+str("s"))
+    
+        plt.xlabel('x (meters)')
+        plt.ylabel('y (meters)')
         plt.axis('equal')
         plt.legend()
+        fig.canvas.mpl_connect('pick_event', show_timestamp)  
     
     def plot_attitude(self):
         """ Plot the orientation in the map frame given by the GPS and after fusion """
@@ -125,10 +137,10 @@ class Recorder:
         plt.xlabel("Times (s)")
         plt.ylabel("Yaw (rad)")
         if hasattr(self.reader,"groundtruth"):
-            plt.plot(self.reader.groundtruth["TIME"],np.unwrap([r.as_euler('zxy')[0] for r in self.reader.groundtruth["ATTITUDE"]]), label="Groundtruth")
-        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.reader.get_gps_att()]), label="GPS")
-        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.get_measured_attitude()]), label="CV2")
-        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([kalman['attitude'].as_euler('zxy')[0] for kalman in self.kalman_record.values()])), label="Kalman")
+            plt.plot(self.reader.groundtruth["TIME"],np.unwrap([r.as_euler('zxy')[0] for r in self.reader.groundtruth["ATTITUDE"]]), 'black', label="Groundtruth")
+        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.reader.get_gps_att()]), 'green', label="GPS")
+        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.get_measured_attitude()]), 'red', label="CV2")
+        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([kalman['attitude'].as_euler('zxy')[0] for kalman in self.kalman_record.values()])), 'cornflowerblue', label="Output")
         plt.legend()    
         
     def plot_innovation(self, individual=False, p=0.99):
@@ -146,7 +158,7 @@ class Recorder:
         """ Return positions after fusion """
         return np.array([kalman['position'] for kalman in self.kalman_record.values()])  
 
-    def get_attitude(self):
+    def get_attitudes(self):
         """ Return attitude after fusion """
         return np.ravel([kalman['attitude'] for kalman in self.kalman_record.values()])  
 

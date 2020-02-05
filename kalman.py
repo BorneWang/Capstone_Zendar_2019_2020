@@ -18,6 +18,18 @@ class Kalman_Mapper:
         self.prev_attitude = rot.from_quat([0,0,1,0])
         self.position = np.zeros(3)
         self.attitude = rot.from_quat([0,0,1,0])
+        self.init_default_covariance()
+       
+    def init_default_covariance(self):
+        """ Initialize the covariances with default values """
+        gps_std = 0.05
+        orientation_std = np.deg2rad(1)
+        cv2_trans_std = 0.04
+        cv2_att_std = np.deg2rad(1)
+        self.P = np.block([[np.diag([gps_std**2, gps_std**2, gps_std**2, orientation_std**2, orientation_std**2, orientation_std**2]), np.zeros((6,6))], [np.zeros((6,6)), np.zeros((6,6))]])
+        self.Q = np.block([[np.zeros((6,6)), np.zeros((6,6))],[ np.zeros((6,6)), np.diag([gps_std**2, gps_std**2, gps_std**2, orientation_std**2, orientation_std**2, orientation_std**2])]])
+        #self.R = np.diag([cv2_trans_std**2, cv2_trans_std**2, cv2_att_std**2])
+        self.R = np.diag([cv2_trans_std**2, cv2_trans_std**2])
         
     def set_covariance(self, gps_std, orientation_std, cv2_trans_std, cv2_att_std):
         """ Set covariance of the Kalman Filter """
@@ -81,3 +93,29 @@ class Kalman_Mapper:
             self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)
             self.mapdata.add_data(self.last_data)
         return deepcopy(self.position), deepcopy(self.attitude)
+    
+class Kalman_Localizer(Kalman_Mapper):
+    
+    def __init__(self, name = None):          
+        super().__init__(name)
+     
+    def init_position(self, gps_pos, attitude):
+        """ Initialize the position of the car as a first guess """
+        self.position = deepcopy(gps_pos)
+        self.attitude = deepcopy(attitude)
+        
+    def localize(self, new_data, mapping=False):
+        """ Find the position of a image thanks to the map """
+        self.prev_position = deepcopy(self.position)
+        self.prev_attitude = deepcopy(self.attitude)
+        mapping_img, _ = self.mapdata.extract_from_map(self.prev_position, self.prev_attitude, np.shape(new_data.img))
+        mapping_data = RadarData(-1, mapping_img, self.position, self.attitude) 
+
+        self.position, self.attitude = new_data.image_position_from(mapping_data)
+        self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)
+        
+        if mapping:  
+            self.mapdata.add_data(self.last_data)
+            
+        return deepcopy(self.position), deepcopy(self.attitude)
+    

@@ -39,7 +39,7 @@ class Reader:
         reader.heatmaps = {k:self.heatmaps[k] for k in list(self.heatmaps.keys())[key]}
         return reader
     
-    def load_heatmaps(self, t_ini=0, t_final=np.inf, option=None):
+    def load_heatmaps(self, t_ini=0, t_final=np.inf):
         """ Function load radar data magnitude from HDF5 between t_ini and"""
         hdf5 = h5py.File(self.src,'r+')
         
@@ -118,7 +118,7 @@ class Reader:
             else:    
                 return [t for t in times if t>=t_ini and t<=t_final]
     
-    def plot_gps_evaluation(self):
+    def plot_evaluation(self):
         """ Evaluate the transformation given in data information compared to image analysis """ 
         times = self.get_timestamps()
         while times[-1]>self.groundtruth["TIME"][-1]:
@@ -177,14 +177,14 @@ class Reader:
 
         plt.figure()
         if hasattr(self,"groundtruth"):
-            print("Average GPS rotation error (rad): " + str(np.mean(att_error_gps)))
-            print("Average cv2 rotation error (rad): " + str(np.mean(att_error_cv2)))
+            print("Average GPS rotation error (deg): " + str(np.rad2deg(np.mean(att_error_gps))))
+            print("Average cv2 rotation error (deg): " + str(np.rad2deg(np.mean(att_error_cv2))))
             plt.title("Error of GPS and CV2 rotations with groundtruth")
             plt.plot(times[1:], att_error_gps, label="GPS")
             plt.plot(times[1:], att_error_cv2, label="CV2")
             plt.legend()
         else:
-            print("Average GPS rotation error (rad): " + str(np.mean(att_error)))
+            print("Average GPS rotation error (rad): " + str(np.rad2deg(np.mean(att_error))))
             plt.title("Error between GPS and CV2 rotations")
             plt.plot(times[1:], att_error)   
         plt.xlabel("Time (s)")
@@ -244,15 +244,15 @@ class Reader:
             times = self.get_timestamps()
             out = []
             for i in range(len(times)-1):
-                out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i+1]].gps_pos))
+                out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
             return out
         else:
             if t_final is None:
-                return np.linalg.norm(self.heatmaps[self.get_timestamps(t_ini+0.1, t_final)].gps_pos - self.heatmaps[self.get_timestamps(t_ini, t_final)].gps_pos)
+                return np.linalg.norm(self.heatmaps[self.get_timestamps(t_ini+0.1, t_final)].gps_pos - self.heatmaps[self.get_timestamps(t_ini, t_final)].gps_pos)/0.1
             else:
                 times = self.get_timestamps(t_ini, t_final)
                 out = []
                 for i in range(len(times)-1):
-                    out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i+1]].gps_pos))
+                    out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
                 return out
         

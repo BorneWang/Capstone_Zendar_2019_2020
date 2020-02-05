@@ -69,20 +69,21 @@ class RadarData:
             #TODO: 3D transformation of image (to take into account pitch and roll changes)
             print("Calculating transformation")
          
+            # ECC
             warp_mode = cv2.MOTION_EUCLIDEAN
             number_of_iterations = 5000;
             termination_eps = 1e-9;
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-            theta = (self.attitude.inv()*otherdata.attitude).as_euler('zxy')[2]
-            trans = self.earth2rbd(otherdata.gps_pos - self.gps_pos)[0:2]
-            warp_matrix = np.array([[np.cos(theta), np.sin(theta), -trans[0]],[-np.sin(theta), np.cos(theta), -trans[1]]], dtype=np.float32)
-            #warp_matrix = np.eye(2, 3, dtype=np.float32)
-            (cc, warp_matrix) = cv2.findTransformECC (otherdata.img, self.img, warp_matrix, warp_mode, criteria)
+            warp_matrix = np.eye(2, 3, dtype=np.float32)
+            (cc, warp_matrix) = cv2.findTransformECC (otherdata.img.astype(np.uint8), self.img.astype(np.uint8), warp_matrix, warp_mode, criteria)
+
+            # SIFT
+            #warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
             
             rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
             translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
             rotation = rot.from_dcm(rot_matrix)
-            
+                        
             cv2_transformations = open("cv2_transformations.pickle","wb")
             trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
             pickle.dump(trans_dict, cv2_transformations)
@@ -95,7 +96,7 @@ class RadarData:
     
     def image_position_from(self, otherdata):
         """ Return the actual position and attitude based on radar images comparison """
-        translation, rotation = self.transformation_to(otherdata)
+        translation, rotation = self.image_transformation_from(otherdata)
         
         gps_pos = otherdata.gps_pos + self.earth2rbd(translation,True)
         attitude = self.attitude*rotation
