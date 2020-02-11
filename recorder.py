@@ -3,7 +3,7 @@ import numpy as np
 import scipy.stats as stat
 import matplotlib.pyplot as plt
 
-from utils import ecef2enu, ecef2lla, rbd_translate
+from utils import rotation_proj, ecef2enu, ecef2lla, rbd_translate
 
 class Recorder:
     
@@ -85,11 +85,11 @@ class Recorder:
                     plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
     
         def show_timestamp(event):
-            print(round(self.reader.get_timestamps()[event.ind[0]],2)+str("s"))
+            print(str(round(self.reader.get_timestamps()[event.ind[0]],2))+"s")
     
         plt.xlabel('x (meters)')
         plt.ylabel('y (meters)')
-        plt.axis('eatt0ual')
+        plt.axis('equal')
         plt.legend()
         fig.canvas.mpl_connect('pick_event', show_timestamp)  
     
