@@ -8,6 +8,8 @@ import matplotlib.animation as animation
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as rot
 
+from utils import rotation_proj
+
 class Reader:
     
     def __init__(self, src, t_ini=0, t_final=np.inf):
@@ -143,11 +145,11 @@ class Reader:
             trans_cv, rotation_cv = data.image_transformation_from(prev_data)
             theta_cv = rotation_cv.as_euler('zxy')[0]
             
-            theta_gps = (prev_data.attitude.inv()*data.attitude).as_euler('zxy')[0]
+            theta_gps = rotation_proj(prev_data.attitude, data.attitude).as_euler('zxy')[0]
             trans_gps = data.earth2rbd(data.gps_pos - prev_data.gps_pos)
             
             if hasattr(self,"groundtruth"):
-                theta_gt = (gt_att[i-1].inv()*gt_att[i]).as_euler('zxy')[0]
+                theta_gt = rotation_proj(gt_att[i-1], gt_att[i]).as_euler('zxy')[0]
                 trans_gt = data.earth2rbd(gt_pos[i] - gt_pos[i-1])
                 
                 pos_error_gps[i-1] = np.sqrt((trans_gt - trans_gps).dot((trans_gt - trans_gps).T))

@@ -4,14 +4,9 @@ import numpy as np
 from os import path
 from PIL import Image
 from scipy.spatial.transform import Rotation as rot
-       
-def check_transform(data, rotation, translation, name):
-    """ Save an image to vizualize the calculated transformation (for test purpose) """
-    translation = translation/0.04
-    shape = (np.shape(data.img)[1], np.shape(data.img)[0])
-    warp_matrix = np.concatenate(((rotation.as_dcm()[:2,:2]).T,np.array([[-translation[0]],[-translation[1]]])), axis = 1)
-    Image.fromarray(cv2.warpAffine(data.img, warp_matrix, shape, flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)).save(name);    
-     
+ 
+from utils import check_transform, rotation_proj
+
 class RadarData:
     
     def __init__(self, ts, img, gps_pos, attitude, precision=0.04):
@@ -105,7 +100,7 @@ class RadarData:
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
         #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        exp_rot_matrix = rot.as_dcm(self.attitude.inv()*attitude)[:2,:2]
+        exp_rot_matrix = rotation_proj(self.attitude, attitude).as_dcm()[:2,:2]
         
         exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
         

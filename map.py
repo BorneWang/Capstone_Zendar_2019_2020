@@ -7,29 +7,7 @@ from data import RadarData
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
 
-def merge_img(img1, img2, P1, P2, P_start, P_end):
-    """ Merge two images pixel by pixel, weighted by uncertainty, only in modified area """
-    img = deepcopy(img1)
-    cov_img = deepcopy(P1)
-    for i in range(max(0,P_start[1]), min(P_end[1], np.size(img1, 0))):
-        for j in range(max(0,P_start[0]), min(P_end[0], np.size(img1, 1))):
-            if np.isnan(img1[i][j]):
-                img[i][j] = deepcopy(img2[i][j])
-                cov_img[i][j] = deepcopy(P2[i][j])
-            elif np.isnan(img2[i][j]):
-                img[i][j] = deepcopy(img1[i][j])
-                cov_img[i][j] = deepcopy(P1[i][j])
-            else:
-                img[i][j] = round((img1[i][j]*P2[i][j] + img2[i][j]*P1[i][j])/(P1[i][j]+P2[i][j]))
-                cov_img[i][j] = P1[i][j]*P2[i][j]/(P1[i][j] + P2[i][j])
-    return img, cov_img
-
-def increase_saturation(img):
-    sat = 1.7
-    gamma = 1.2
-    im = np.power(img/(255/sat), gamma)*255
-    im[im >= 255] = 255
-    return im
+from utils import rotation_proj, increase_saturation, merge_img
 
 class Map():
     
@@ -87,7 +65,7 @@ class Map():
         map_hdf5 = hdf5["map"]
         cov_map_hdf5 = hdf5["covariance"]
         
-        q = rot.from_dcm(np.block([[rot.as_dcm(self.attitude.inv()*otherdata.attitude)[:2,:2], np.zeros((2,1))],[np.zeros((1,2)), 1]]))
+        q = rotation_proj(self.attitude, otherdata.attitude)
         P5 = self.attitude.apply(otherdata.gps_pos - self.gps_pos)[0:2]
         P6 = P5 + q.apply(np.array([otherdata.width(),0,0]))[0:2]
         P7 = P5 + q.apply(np.array([otherdata.width(),otherdata.height(),0]))[0:2]
@@ -134,8 +112,7 @@ class Map():
         img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(otherdata)
         shape = np.shape(img1)
         v2 = self.attitude.apply(otherdata.gps_pos - new_origin)[0:2]/self.precision
-        # M2 = np.concatenate((rot.as_dcm(self.attitude.inv()*otherdata.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
-        M2 = np.concatenate((rot.as_dcm(otherdata.attitude.inv()*self.attitude)[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
+        M2 = np.concatenate((rotation_proj(self.attitude, otherdata.attitude).as_dcm()[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
         img2 = cv2.warpAffine(otherdata.img, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         cov_img2 = cv2.warpAffine(self.img_cov*np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         mask = cv2.warpAffine(np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0);
@@ -227,7 +204,9 @@ class Map():
         img1, cov_img1, new_origin, _, _ = self.build_partial_map(data_temp)
 
         P_start = self.attitude.apply(new_origin - gps_pos)[0:2]/self.precision
-        M2 = np.concatenate((rot.as_dcm(attitude.inv()*self.attitude)[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
+        #M2 = np.concatenate((rot.as_dcm(attitude.inv()*self.attitude)[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
+        M2 = np.concatenate((rotation_proj(self.attitude, attitude).inv().as_dcm()[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
+
         M2 = scale*np.eye(2).dot(M2)
         img2 = cv2.warpAffine(img1, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         cov_img2 = cv2.warpAffine(cov_img1, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)

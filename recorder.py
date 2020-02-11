@@ -1,46 +1,9 @@
 import gmplot
-import pyproj
 import numpy as np
 import scipy.stats as stat
 import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation as rot
 
-def ecef2lla(pos):
-    """ Convert position in ECEF frame to LLA """
-    ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
-    lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
-    if pos.ndim == 1:
-        lon, lat, alt = pyproj.transform(ecef, lla, pos[0], pos[1], pos[2], radians=False)
-    else:        
-        lon, lat, alt = pyproj.transform(ecef, lla, pos[:,0], pos[:,1], pos[:,2], radians=False)
-    return np.array([lon, lat, alt]).T
-
-def ecef2enu(lat0, lon0):
-    """ Compute quaternion of transformation between ECEF to ENU frame """
-    MatNorthPole = np.array([[-1., 0., 0.],
-                           [0., -1., 0.],
-                           [ 0., 0. , 1.]])
-    sColat = np.sin(np.pi/2-lat0)
-    cColat = np.cos(np.pi/2-lat0)
-    MatLat = np.array([[ cColat , 0. , sColat ],
-                     [   0.   , 1. ,   0.   ],
-                     [-sColat , 0. , cColat ]])
-    sLon = np.sin(lon0)
-    cLon = np.cos(lon0)
-    Matlon = np.array([[ cLon , -sLon , 0. ],
-                     [ sLon , cLon  , 0. ],
-                     [  0.  ,  0.   , 1. ]])
-    return rot.from_dcm(np.array([[0,-1,0],[1,0,0],[0,0,1]]).dot(Matlon.dot(MatLat.dot(MatNorthPole)).T))
-
-def rbd_translate(gps_positions, attitudes, trans):
-    """ Convert the position of the top left corner of image to car position """
-    if gps_positions.ndim == 1:
-        return attitudes.apply(attitudes.apply(gps_positions) - trans, True)
-    else:          
-        car_pos = []
-        for i in range(len(gps_positions)):
-            car_pos.append(attitudes[i].apply(attitudes[i].apply(gps_positions[i]) - trans, True))
-        return np.array(car_pos)
+from utils import ecef2enu, ecef2lla, rbd_translate
 
 class Recorder:
     
@@ -57,20 +20,20 @@ class Recorder:
         """ Plot reference GPS on a Google map as well as measured position and filtered position """
         if hasattr(self.reader,"groundtruth"):
             coords = ecef2lla(rbd_translate(np.array(self.reader.groundtruth["POSITION"]), self.reader.groundtruth["ATTITUDE"], self.reader.groundtruth_translation))
-            gmap=gmplot.GoogleMapPlotter(np.mean(coords[:,1]), np.mean(coords[:,0]), 15)
-            gmap.plot(coords[:,1], coords[:,0], 'black', edge_width = 2.5)
+            gmap=gmplot.GoogleMapPlotter(np.rad2deg(np.mean(coords[:,1])), np.rad2deg(np.mean(coords[:,0])), 15)
+            gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'black', edge_width = 2.5)
         
         coords = ecef2lla(rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation))
         if not hasattr(self.reader,"groundtruth"):
             gmap=gmplot.GoogleMapPlotter(np.mean(coords[:,1]), np.mean(coords[:,0]), 15)
-        gmap.plot(coords[:,1], coords[:,0], 'green', edge_width = 2.5)
+        gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'green', edge_width = 2.5)
 
         coords = ecef2lla(rbd_translate(self.get_measured_positions(), self.get_measured_attitude(), self.reader.tracklog_translation))
-        gmap.plot(coords[:,1], coords[:,0], 'red', edge_width = 2.5)
+        gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'red', edge_width = 2.5)
         
         if len(self.get_positions())!=0:
             coords = ecef2lla(rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation))
-            gmap.plot(coords[:,1], coords[:,0], 'cornflowerblue', edge_width = 2.5)
+            gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'cornflowerblue', edge_width = 2.5)
             
         #img_bounds = {}
         #img_bounds['west'] = (xmin - lon_midpt) * (grid_points / (grid_points - 1)) + lon_midpt
@@ -88,36 +51,36 @@ class Recorder:
         if hasattr(self.reader,"groundtruth"):
             pos = rbd_translate(np.array(self.reader.groundtruth["POSITION"]), self.reader.groundtruth["ATTITUDE"], self.reader.groundtruth_translation)
             coord0 = ecef2lla(pos[0])
-            q = ecef2enu(coord0[1]*np.pi/180, coord0[0]*np.pi/180)
-            trajectory = q.apply(pos - pos[0])   
+            att0 = ecef2enu(coord0[1], coord0[0])
+            trajectory = att0.apply(pos - pos[0])   
             plt.plot(trajectory[:,0], trajectory[:,1], 'black', label="Groundtruth", picker=True)
         else:
             pos = rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation)
             coord0 = ecef2lla(pos[0])
-            q = ecef2enu(coord0[1]*np.pi/180, coord0[0]*np.pi/180)
+            att0 = ecef2enu(coord0[1], coord0[0])
           
         pos = rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation)
-        trajectory = q.apply(pos - pos[0])       
+        trajectory = att0.apply(pos - pos[0])       
         plt.plot(trajectory[:,0], trajectory[:,1], 'g', label="GPS", picker=True)
         if arrow:
-            arrows = np.array([q.apply(data.earth2rbd([0,-1,0], True)) for data in self.reader.get_radardata()])
+            arrows = np.array([att0.apply(data.earth2rbd([0,-1,0], True)) for data in self.reader.get_radardata()])
             for i in range(0, len(arrows), 5):
                 plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
         
         pos = rbd_translate(self.get_measured_positions(), self.get_measured_attitude(), self.reader.tracklog_translation)
-        trajectory = q.apply(pos - pos[0])        
+        trajectory = att0.apply(pos - pos[0])        
         plt.plot(trajectory[:,0], trajectory[:,1], 'r', label="CV2", picker=True)
         if arrow:
-            arrows = np.array([q.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
+            arrows = np.array([att0.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
             for i in range(0, len(arrows), 5):
                 plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
         
         if len(self.get_positions())!=0:
             pos = rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation)
-            trajectory = q.apply(pos - pos[0])        
+            trajectory = att0.apply(pos - pos[0])        
             plt.plot(trajectory[:,0], trajectory[:,1], 'cornflowerblue', label="Output", picker=True)
             if arrow:
-                arrows = np.array([q.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
+                arrows = np.array([att0.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitude()])
                 for i in range(0, len(arrows), 5):
                     plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
     
@@ -126,7 +89,7 @@ class Recorder:
     
         plt.xlabel('x (meters)')
         plt.ylabel('y (meters)')
-        plt.axis('equal')
+        plt.axis('eatt0ual')
         plt.legend()
         fig.canvas.mpl_connect('pick_event', show_timestamp)  
     
@@ -137,10 +100,18 @@ class Recorder:
         plt.xlabel("Times (s)")
         plt.ylabel("Yaw (rad)")
         if hasattr(self.reader,"groundtruth"):
+            pos = rbd_translate(np.array(self.reader.groundtruth["POSITION"]), self.reader.groundtruth["ATTITUDE"], self.reader.groundtruth_translation)
+            coord0 = ecef2lla(pos[0])
+            att0 = ecef2enu(coord0[1], coord0[0])
             plt.plot(self.reader.groundtruth["TIME"],np.unwrap([r.as_euler('zxy')[0] for r in self.reader.groundtruth["ATTITUDE"]]), 'black', label="Groundtruth")
-        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.reader.get_gps_att()]), 'green', label="GPS")
-        plt.plot(self.reader.get_timestamps(), np.unwrap([r.as_euler('zxy')[0] for r in self.get_measured_attitude()]), 'red', label="CV2")
-        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([kalman['attitude'].as_euler('zxy')[0] for kalman in self.kalman_record.values()])), 'cornflowerblue', label="Output")
+
+        else:
+            pos = rbd_translate(self.reader.get_gps_pos(), self.reader.get_gps_att(), self.reader.tracklog_translation)
+            coord0 = ecef2lla(pos[0])
+            att0 = ecef2enu(coord0[1], coord0[0])
+        plt.plot(self.reader.get_timestamps(), np.unwrap([rotation_proj(att0,r).as_euler('zxy')[0] for r in self.reader.get_gps_att()]), 'green', label="GPS")
+        plt.plot(self.reader.get_timestamps(), np.unwrap([rotation_proj(att0,r).as_euler('zxy')[0] for r in self.get_measured_attitude()]), 'red', label="CV2")
+        plt.plot(list(self.kalman_record.keys()), np.unwrap(np.array([rotation_proj(att0,kalman['attitude']).as_euler('zxy')[0] for kalman in self.kalman_record.values()])), 'cornflowerblue', label="Output")
         plt.legend()    
         
     def plot_innovation(self, individual=False, p=0.99):
