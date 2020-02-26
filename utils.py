@@ -2,61 +2,33 @@ import cv2
 import pyproj
 import numpy as np
 from PIL import Image
-from pykml import parser
 from copy import deepcopy
-import scipy.stats as stat
 from scipy.spatial.transform import Rotation as rot
 
-def stat_test(Yhat, Y, S):
-    """ Perform statistical test to reject outliers """
-    used = np.zeros(len(Y))
-    for i in range(0, len(Yhat)):
-        if (Yhat[i] - Y[i])**2/S[i][i] <= stat.chi2.ppf(0.99, df=1):
-            used[i] = 1
-    return used  
-
-def import_kml(filename):
-    """ Import KML file by retreiving timestamps and positions """
-    out = []
-    ts = []
-    with open(filename) as f:
-        root = parser.parse(f).getroot()
-        pms = root.findall('.//{http://www.opengis.net/kml/2.2}Placemark')
-        for pm in pms:
-            ts.append(float(pm.description.text.replace('\n',' ').split(' ')[1]))
-            out.append( np.array(str(pm.findall('.//{http://www.opengis.net/kml/2.2}Point')[0].coordinates).split(',')).astype(np.double))
-    for i in range(0,len(out)):
-        out[i][0:2] = np.deg2rad(out[i][0:2])
-    return ts, np.array(out)
-
-def R(theta):
-    """ Return 2D rotation matrix according rbd convention """
-    return np.array([[np.cos(theta), np.sin(theta)],[-np.sin(theta), np.cos(theta)]])
-
 def rotation_proj(attitude1, attitude2):
-    """ Project the rotation only on Z axis from attitude1 to attitude2 """
-    r = attitude1.apply(attitude2.apply([1,0,0],True))
-    return rot.from_dcm(np.array([[r[0], -r[1], 0.],[r[1], r[0], 0.],[0., 0., 1.]]))
+    """ Project the rotation only on Z axis """
+    r = attitude1.apply(attitude2.apply([0,1,0],True))
+    r[r>=1] = 1
+    theta = np.mean([np.arcsin(abs(r[0])), np.arccos(abs(r[1]))])
+    theta = np.sign(np.arcsin(abs(r[0])))*theta
+    sin = np.sin(theta)
+    cos = np.cos(theta)
+    return rot.from_dcm(np.array([[ cos , -sin , 0. ],
+                     [ sin , cos  , 0. ],
+                     [  0.  ,  0.   , 1. ]]))
 
-def ecef2lla(pos, inv=False):
+def ecef2lla(pos):
     """ Convert position in ECEF frame to LLA """
     ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
     lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
-    if inv:
-        if pos.ndim == 1:
-            x, y, z = pyproj.transform(lla, ecef, pos[0], pos[1], pos[2], radians=True)
-        else:        
-            x, y, z = pyproj.transform(lla, ecef, pos[:,0], pos[:,1], pos[:,2], radians=True)
-        return np.array([x, y, z]).T
-    else:
-        if pos.ndim == 1:
-            lon, lat, alt = pyproj.transform(ecef, lla, pos[0], pos[1], pos[2], radians=True)
-        else:        
-            lon, lat, alt = pyproj.transform(ecef, lla, pos[:,0], pos[:,1], pos[:,2], radians=True)
-        return np.array([lon, lat, alt]).T
+    if pos.ndim == 1:
+        lon, lat, alt = pyproj.transform(ecef, lla, pos[0], pos[1], pos[2], radians=True)
+    else:        
+        lon, lat, alt = pyproj.transform(ecef, lla, pos[:,0], pos[:,1], pos[:,2], radians=True)
+    return np.array([lon, lat, alt]).T
 
 def ecef2enu(lat0, lon0):
-    """ Compute quaternion of transformation between LLA to ENU frame """
+    """ Compute quaternion of transformation between ECEF to ENU frame """
     MatNorthPole = np.array([[-1., 0., 0.],
                            [0., -1., 0.],
                            [ 0., 0. , 1.]])
@@ -75,11 +47,11 @@ def ecef2enu(lat0, lon0):
 def rbd_translate(gps_positions, attitudes, trans):
     """ Convert the position of the top left corner of image to car position """
     if gps_positions.ndim == 1:
-        return gps_positions - attitudes.apply(trans, True)
+        return attitudes.apply(attitudes.apply(gps_positions) - trans, True)
     else:          
         car_pos = []
         for i in range(len(gps_positions)):
-            car_pos.append(gps_positions[i] - attitudes[i].apply(trans, True))
+            car_pos.append(attitudes[i].apply(attitudes[i].apply(gps_positions[i]) - trans, True))
         return np.array(car_pos)
     
 def check_transform(data, rotation, translation, name):
@@ -110,6 +82,26 @@ def increase_saturation(img):
     """ Increase saturation of an image """
     sat = 1.7
     gamma = 1.2
-    im = np.power(sat*img/255, gamma)*255
+    im = np.power(img/(255/sat), gamma)*255
     im[im >= 255] = 255
     return im
+
+def image_overlap(data1,data2):
+    
+    w1 = np.ones(np.shape(data1.img))
+    w2 = np.ones(np.shape(data2.img))
+    
+    white_1 = RadarData(0,w1,data1.gps_pos,data1.attitude)
+    white_2 = RadarData(0,w2,data2.gps_pos,data2.attitude)
+    
+    mask1 = white_1.predictimage(data2.gps_pos,data2.attitude)
+    mask2 = white_2.predictimage(data1.gps_pos,data1.attitude)
+    
+    out1 = np.ones(np.shape(data2.img))
+    out1[mask1==1] = data2.img
+    
+    out2 = np.ones(np.shape(data1.img))
+    out2[mask2==1] = data1.img
+    
+
+
