@@ -135,12 +135,7 @@ class Map():
         speed_scroll = 0.1
         shape = (1000, 2000)
         scroll_limit = 0.4
-        
-        if gps_pos is None:
-            self.display['gps_pos'] = deepcopy(self.gps_pos)
-        else:
-            self.display['gps_pos'] = deepcopy(gps_pos)
-        
+                
         def press(event):
             if event.key == 'left':
                 self.display['pos'] = self.display['pos'] - np.array([self.display['scale']*speed_trans*self.precision,0,0])
@@ -167,12 +162,22 @@ class Map():
             
         def close(event):
             self.display['fig'] = None
-                 
+              
         missing = (self.display['fig'] is None)
+        if gps_pos is None:
+            self.display['gps_pos'] = deepcopy(self.gps_pos)
+        else:
+            if len(gps_pos)==2:
+                self.display['gps_pos'] = deepcopy(self.gps_pos)
+                self.display['pos'] = np.append(gps_pos, 0)
+            else:   
+                self.display['gps_pos'] = deepcopy(gps_pos)
+                if missing:
+                    self.display['pos'] = np.array([0,0,0])
+            
         if missing: 
             self.display['text'] = "0 ; 0"
             self.display['scale'] = 1
-            self.display['pos'] = np.array([0,0,0])
             self.display['fig'] = plt.figure(num=self.map_name, facecolor=(1,1,1))
             self.display['fig'].canvas.mpl_connect('key_press_event', press)
             self.display['fig'].canvas.mpl_connect('scroll_event', scroll)
@@ -204,8 +209,9 @@ class Map():
         img1, cov_img1, new_origin, _, _ = self.build_partial_map(data_temp)
 
         P_start = self.attitude.apply(new_origin - gps_pos)[0:2]/self.precision
-        #M2 = np.concatenate((rot.as_dcm(attitude.inv()*self.attitude)[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
-        M2 = np.concatenate((rotation_proj(self.attitude, attitude).inv().as_dcm()[:2,:2],np.array([[P_start[0]],[P_start[1]]])), axis = 1)
+        R = rotation_proj(self.attitude, attitude).inv().as_dcm()[:2,:2]
+        #M2 = np.concatenate((R, R.dot(np.array([[P_start[0]],[P_start[1]]]))), axis = 1)
+        M2 = np.concatenate((R,R.dot(np.array([[P_start[0]],[P_start[1]]]))), axis = 1)
 
         M2 = scale*np.eye(2).dot(M2)
         img2 = cv2.warpAffine(img1, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)

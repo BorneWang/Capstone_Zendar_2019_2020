@@ -61,31 +61,31 @@ class RadarData:
         if str(self.id)+"-"+str(otherdata.id) in trans_dict:
             translation, rotation = trans_dict[str(self.id)+"-"+str(otherdata.id)]
         else:
-            #TODO: 3D transformation of image (to take into account pitch and roll changes)
             print("Calculating transformation")
          
             # ECC
             warp_mode = cv2.MOTION_EUCLIDEAN
-            number_of_iterations = 5000;
+            number_of_iterations = 625;
             termination_eps = 1e-9;
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
             (cc, warp_matrix) = cv2.findTransformECC (otherdata.img.astype(np.uint8), self.img.astype(np.uint8), warp_matrix, warp_mode, criteria)
 
             # SIFT
-            #warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
+            # warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
             
             rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
             translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
             rotation = rot.from_dcm(rot_matrix)
-                        
-            cv2_transformations = open("cv2_transformations.pickle","wb")
-            trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
-            pickle.dump(trans_dict, cv2_transformations)
-            cv2_transformations.close()  
             
-        #TODO: just for test and vizualisation, could be removed()
-        #check_transform(self, rotation, translation, 'radar1_1.png')
+            if not (otherdata.id == -1 or self.id == -1):      
+                cv2_transformations = open("cv2_transformations.pickle","wb")
+                trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
+                pickle.dump(trans_dict, cv2_transformations)
+                cv2_transformations.close()  
+            
+        # just for test and vizualisation, could be removed()
+        # check_transform(self, rotation, translation, 'radar1_1.png')
             
         return translation, rotation
     
@@ -93,13 +93,13 @@ class RadarData:
         """ Return the actual position and attitude based on radar images comparison """
         translation, rotation = self.image_transformation_from(otherdata)
         
-        gps_pos = otherdata.gps_pos + self.earth2rbd(translation,True)
-        attitude = self.attitude*rotation
+        gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
+        # TODO: check rotation application
+        attitude = rotation.inv()*otherdata.attitude
         return gps_pos, attitude
     
     def predict_image(self, gps_pos, attitude):
         """ Give the prediction of an observation in a different position based on actual radar image """
-        #TODO: 3D transformation of image (to take into account pitch and roll changes)
         exp_rot_matrix = rotation_proj(self.attitude, attitude).as_dcm()[:2,:2]
         
         exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
@@ -114,7 +114,7 @@ class RadarData:
         diff[diff == -1] = np.nan
         prediction = diff + predict_img
 
-        #TODO: just for test and vizualisation, could be removed()
-        #Image.fromarray(predict_img).save('radar2_2.png')
+        # just for test and vizualisation, could be removed()
+        # Image.fromarray(predict_img).save('radar2_2.png')
 
         return prediction
