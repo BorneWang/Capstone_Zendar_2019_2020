@@ -5,7 +5,6 @@ from PIL import Image
 from pykml import parser
 from copy import deepcopy
 import scipy.stats as stat
-from data import RadarData
 from scipy.spatial.transform import Rotation as rot
 
 def stat_test(Yhat, Y, S):
@@ -114,20 +113,3 @@ def increase_saturation(img):
     im = np.power(sat*img/255, gamma)*255
     im[im >= 255] = 255
     return im
-
-def image_overlap(data1,data2):
-    """ Return only the image intersection """
-    w1 = np.ones(np.shape(data1.img))
-    w2 = np.ones(np.shape(data2.img))
-
-    white_1 = RadarData(0,w1,data1.gps_pos,data1.attitude)
-    white_2 = RadarData(0,w2,data2.gps_pos,data2.attitude)
-
-    mask1 = white_1.predictimage(data2.gps_pos,data2.attitude)
-    mask2 = white_2.predictimage(data1.gps_pos,data1.attitude)
-
-    out1 = np.ones(np.shape(data2.img))
-    out1[mask1==1] = data2.img
-
-    out2 = np.ones(np.shape(data1.img))
-    out2[mask2==1] = data1.img

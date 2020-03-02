@@ -118,3 +118,18 @@ class RadarData:
         # Image.fromarray(predict_img).save('radar2_2.png')
 
         return prediction
+    
+    def image_overlap(self,data2):
+        """ Return only the image intersection """
+        w1 = np.ones(np.shape(self.img))
+        w2 = np.ones(np.shape(data2.img))
+    
+        white_1 = RadarData(0,w1,self.gps_pos,self.attitude)
+        white_2 = RadarData(0,w2,data2.gps_pos,data2.attitude)
+    
+        mask1 = white_2.predict_image(self.gps_pos,self.attitude)
+        mask2 = white_1.predict_image(data2.gps_pos,data2.attitude)
+    
+        out1 = np.multiply(mask1, self.img)
+        out2 = np.multiply(mask2, data2.img)
+        return out1, out2
