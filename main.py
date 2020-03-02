@@ -2,7 +2,7 @@ import warnings
 import numpy as np
 from reader import Reader
 from recorder import Recorder
-from kalman import Kalman_Mapper, Kalman_Localizer
+from kalman import Kalman_Mapper_GPSCV2_3D, Kalman_Localizer
 
 warnings.filterwarnings("ignore") 
 
@@ -11,13 +11,12 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 
 # Loading data   
-reader = Reader('radardata2.h5', 10, 75)
+reader = Reader('radardata2.h5', 0, np.inf)
 
-
-kalman = Kalman_Mapper(False) # Creating Kalman filter for mapping
+kalman = Kalman_Mapper_GPSCV2_3D(False) # Creating Kalman filter for mapping
 
 #TODO: decide more precisely covariances
-kalman.set_covariance(0.05, np.deg2rad(1), 0.04, np.deg2rad(1))
+kalman.set_covariances(0.015, np.deg2rad(0.018), 0.035, np.deg2rad(0.099))
 
 recorder = Recorder(reader, kalman) # Creating recorder 
 
@@ -35,21 +34,23 @@ if kalman.mapping:
 
 # Plots
 recorder.export_map()
-#recorder.plot_innovation()
-#recorder.plot_attitude()
+recorder.plot_innovation()
+recorder.plot_attitude()
+recorder.plot_trajectory(False)
+recorder.plot_kalman_evaluation()
 
 # =============================================================================
 # Localization
 # =============================================================================
-'''
+"""
 # Loading data   
-reader = Reader('radardata2.h5', 6, 11)
+reader = Reader('radardata2.h5', 10, 15)
 
 # Creating Kalman filter for mapping
-kalman = Kalman_Localizer(False, "map_20200210_1635")
+kalman = Kalman_Localizer(False, "map_20200222_1456")
 # Initialize the first position and attitude
-kalman.init_position(reader.get_radardata(0).gps_pos, reader.get_radardata(0).attitude)
-
+# kalman.set_initial_position(reader.groundtruth['POSITION'][0], reader.groundtruth['ATTITUDE'][0])
+kalman.set_initial_position(reader.get_radardata(0).gps_pos, reader.get_radardata(0).attitude)
 # Creating recorder 
 recorder = Recorder(reader, kalman)
 
@@ -62,5 +63,5 @@ for ts, radardata in reader:
     #kalman.mapdata.show(pos)
 
 # Plots
-recorder.export_map()
-'''
+#recorder.export_map()
+"""
