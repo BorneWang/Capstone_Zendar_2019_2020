@@ -7,13 +7,23 @@ from copy import deepcopy
 import scipy.stats as stat
 from scipy.spatial.transform import Rotation as rot
 
-def stat_test(Yhat, Y, S):
+def stat_test(Y, Yhat, S, p):
     """ Perform statistical test to reject outliers """
     used = np.zeros(len(Y))
     for i in range(0, len(Yhat)):
-        if (Yhat[i] - Y[i])**2/S[i][i] <= stat.chi2.ppf(0.99, df=1):
-            used[i] = 1
+        if (Yhat[i] - Y[i])**2/S[i][i] <= stat.chi2.ppf(p, df=1):
+            used[i] = Yhat[i] - Y[i]
     return used  
+
+def stat_filter(x, p):
+    """ Filter outliers from a sequence """
+    mean = np.mean(x)
+    std = np.std(x)
+    out =  []
+    for i in range(len(x)):
+        if ((x[i] - mean)/std)**2 <= stat.chi2.ppf(p, df=1):
+            out.append(x[i])
+    return out
 
 def import_kml(filename):
     """ Import KML file by retreiving timestamps and positions """

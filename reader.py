@@ -8,7 +8,7 @@ import matplotlib.animation as animation
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj
+from utils import rotation_proj, stat_filter
 
 class Reader:
     
@@ -159,29 +159,29 @@ class Reader:
             
         plt.figure()
         if hasattr(self,"groundtruth"):
-            print("Average GPS translation error (m): " + str(np.mean(pos_error_gps)))
-            print("Average cv2 translation error (m): " + str(np.mean(pos_error_cv2)))
+            print("Average GPS translation error (m): " + str(np.mean(stat_filter(pos_error_gps, 0.9))) + " (" +str(np.std(pos_error_gps))+ ")")
+            print("Average cv2 translation error (m): " + str(np.mean(stat_filter(pos_error_cv2, 0.9))) + " (" +str(np.std(pos_error_cv2))+ ")")
             plt.title("Square root error of GPS and CV2 translations with groundtruth")
             plt.plot(times[1:], pos_error_gps, label="GPS")
             plt.plot(times[1:], pos_error_cv2, label="CV2")
             plt.legend()
         else:
             plt.title("Square root error between GPS and CV2 translations")
-            print("Average GPS translation error (m): " + np.mean(pos_error))
+            print("Average GPS translation error (m): " + str(np.mean(stat_filter(pos_error, 0.9))) + " (" +str(np.std(pos_error))+ ")")
             plt.plot(times[1:], pos_error)
         plt.xlabel("Time (s)")
         plt.ylabel("Error (m)")
 
         plt.figure()
         if hasattr(self,"groundtruth"):
-            print("Average GPS rotation error (deg): " + str(np.rad2deg(np.mean(att_error_gps))))
-            print("Average cv2 rotation error (deg): " + str(np.rad2deg(np.mean(att_error_cv2))))
+            print("Average GPS rotation error (deg): " + str(np.rad2deg(np.mean(stat_filter(att_error_gps, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error_gps)))+ ")")
+            print("Average cv2 rotation error (deg): " + str(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error_cv2)))+ ")")
             plt.title("Error of GPS and CV2 rotations with groundtruth")
             plt.plot(times[1:], att_error_gps, label="GPS")
             plt.plot(times[1:], att_error_cv2, label="CV2")
             plt.legend()
         else:
-            print("Average GPS rotation error (rad): " + str(np.rad2deg(np.mean(att_error))))
+            print("Average GPS rotation error (rad): " + str(np.rad2deg(np.mean(stat_filter(att_error, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error)))+ ")")
             plt.title("Error between GPS and CV2 rotations")
             plt.plot(times[1:], att_error)   
         plt.xlabel("Time (s)")

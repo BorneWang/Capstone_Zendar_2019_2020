@@ -117,7 +117,7 @@ class Kalman_Mapper_GPSCV2(Kalman_Mapper):
         H = np.block([np.zeros((3,3)), np.eye(3)])
         S = H.dot(self.P).dot(H.T) + self.R
         K = self.P.dot(H.T).dot(np.linalg.inv(S))
-        Z = stat_test(Yhat, Y, S)*(Y - Yhat)
+        Z = stat_test(Y, Yhat, S, 0.99)*(Y - Yhat)
         e = K.dot(Z)
 
         self.prev_pos2D = self.prev_pos2D  + e[0:2]
