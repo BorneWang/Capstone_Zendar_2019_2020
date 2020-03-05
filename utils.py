@@ -1,11 +1,20 @@
 import cv2
 import pyproj
+import pickle
 import numpy as np
 from PIL import Image
 from pykml import parser
 from copy import deepcopy
 import scipy.stats as stat
+import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
+
+def figure_save(number, name):
+    pickle.dump(plt.figure(number), open(str(name)+'.pickle', 'wb'))
+
+def import_figure(name):
+    fig = pickle.load(open(str(name)+'.pickle', 'rb'))
+    fig.show()
 
 def stat_test(Y, Yhat, S, p):
     """ Perform statistical test to reject outliers """
@@ -17,12 +26,11 @@ def stat_test(Y, Yhat, S, p):
 
 def stat_filter(x, p):
     """ Filter outliers from a sequence """
-    mean = np.mean(x)
-    std = np.std(x)
+    mean = np.mean(x, axis = 0)
+    std = np.std(x, axis = 0)
     out =  []
     for i in range(len(x)):
-        if ((x[i] - mean)/std)**2 <= stat.chi2.ppf(p, df=1):
-            out.append(x[i])
+        out.append(np.multiply(x[i],np.greater_equal(stat.chi2.ppf(p, df=1), np.square(np.divide(x[i] - mean,std)))))
     return out
 
 def import_kml(filename):

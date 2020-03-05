@@ -16,6 +16,7 @@ class Reader:
         self.src = src
         self.heatmaps = dict()
         self.tracklog_translation = np.zeros(3)
+        self.bias = None
         
         self.load_heatmaps(t_ini, t_final)
     
@@ -42,7 +43,7 @@ class Reader:
         return reader
     
     def load_heatmaps(self, t_ini=0, t_final=np.inf):
-        """ Function load radar data magnitude from HDF5 between t_ini and"""
+        """ Function load radar data magnitude from HDF5 between t_ini and t_final"""
         hdf5 = h5py.File(self.src,'r+')
         
         aperture_gt = hdf5['radar']['broad01']
@@ -126,66 +127,130 @@ class Reader:
             else:    
                 return [t for t in times if t>=t_ini and t<=t_final]
     
-    def plot_evaluation(self):
-        """ Evaluate the transformation given in data information compared to image analysis """ 
+    def plot_evaluation(self, corrected = False, grouped = True):
+        """ Evaluate the transformation given in GPS data information compared to CV2 image analysis """ 
         times = self.get_timestamps()
         if hasattr(self,"groundtruth"):
-            pos_error_gps = np.zeros(len(times)-1)
-            pos_error_cv2 = np.zeros(len(times)-1)
+            pos_error_gps = np.zeros((len(times)-1,3))
+            pos_error_cv2 = np.zeros((len(times)-1,3))
             att_error_gps = np.zeros(len(times)-1)
             att_error_cv2 = np.zeros(len(times)-1)
         else:         
-            pos_error = np.zeros(len(times)-1)
+            pos_error = np.zeros((len(times)-1,3))
             att_error = np.zeros(len(times)-1)
             
         for i in range(1,len(times)):           
             trans_cv, rotation_cv = self.heatmaps[times[i]].image_transformation_from(self.heatmaps[times[i-1]])
             theta_cv = rotation_cv.as_euler('zxy')[0]
             
-            theta_gps = rotation_proj(self.heatmaps[times[i-1]].attitude, self.heatmaps[times[i]].attitude).as_euler('zxy')[0]
-            trans_gps = self.heatmaps[times[i]].earth2rbd(self.heatmaps[times[i]].gps_pos - self.heatmaps[times[i-1]].gps_pos)
+            theta_gps = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
+            trans_gps = self.heatmaps[times[i]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))
             
             if hasattr(self,"groundtruth"):
-                theta_gt = rotation_proj(self.groundtruth[times[i-1]]['ATTITUDE'], self.groundtruth[times[i]]['ATTITUDE']).as_euler('zxy')[0]
-                trans_gt = self.groundtruth[times[i]]['ATTITUDE'].apply(self.groundtruth[times[i]]['POSITION'] - self.groundtruth[times[i-1]]['POSITION'])
-                
-                pos_error_gps[i-1] = np.sqrt((trans_gt - trans_gps).dot((trans_gt - trans_gps).T))
-                att_error_gps[i-1] = abs(theta_gt - theta_gps)
-                pos_error_cv2[i-1] = np.sqrt((trans_gt - trans_cv).dot((trans_gt - trans_cv).T))
-                att_error_cv2[i-1] = abs(theta_gt - theta_cv)
-            else:             
-                pos_error[i-1] = np.sqrt((trans_gps - trans_cv).dot((trans_gps - trans_cv).T))
-                att_error[i-1] = abs(theta_gps - theta_cv)
-            
-        plt.figure()
-        if hasattr(self,"groundtruth"):
-            print("Average GPS translation error (m): " + str(np.mean(stat_filter(pos_error_gps, 0.9))) + " (" +str(np.std(pos_error_gps))+ ")")
-            print("Average cv2 translation error (m): " + str(np.mean(stat_filter(pos_error_cv2, 0.9))) + " (" +str(np.std(pos_error_cv2))+ ")")
-            plt.title("Square root error of GPS and CV2 translations with groundtruth")
-            plt.plot(times[1:], pos_error_gps, label="GPS")
-            plt.plot(times[1:], pos_error_cv2, label="CV2")
-            plt.legend()
+                theta_gt = rotation_proj(self.get_groundtruth_att(times[i-1]), self.get_groundtruth_att(times[i])).as_euler('zxy')[0]
+                trans_gt = self.get_groundtruth_att(times[i]).apply(self.get_groundtruth_pos(times[i]) - self.get_groundtruth_pos(times[i-1]))                
+                pos_error_gps[i-1] = trans_gt - trans_gps
+                att_error_gps[i-1] = theta_gt - theta_gps
+                if corrected:   
+                    pos_error_cv2[i-1] = trans_gt - (trans_cv + self.get_bias()[0])
+                    att_error_cv2[i-1] = theta_gt - (theta_cv + self.get_bias()[1].as_euler('zxy')[0])
+                else:
+                    pos_error_cv2[i-1] = trans_gt - trans_cv
+                    att_error_cv2[i-1] = theta_gt - theta_cv
+            else:     
+                if corrected:   
+                    pos_error[i-1] = trans_gps - (trans_cv + self.get_bias()[0])
+                    att_error[i-1] = theta_gps - (theta_cv + self.get_bias()[1].as_euler('zxy')[0])
+                else:
+                    pos_error[i-1] = trans_gt - trans_cv
+                    att_error[i-1] = theta_gps - theta_cv
+                    
+        if grouped:  
+            plt.figure()
+            plt.xlabel("Time (s)")
+            plt.ylabel("Error (m)")
+            if hasattr(self,"groundtruth"):
+                plt.title("Square root error of GPS and CV2 translations with groundtruth")
+                plt.plot(times[1:], np.linalg.norm(pos_error_gps, axis=1), label="GPS")
+                plt.plot(times[1:], np.linalg.norm(pos_error_cv2, axis=1), label="CV2")
+                plt.legend()
+            else:
+                plt.title("Square root error between GPS and CV2 translations")
+                plt.plot(times[1:], np.linalg.norm(pos_error, axis=1))
         else:
-            plt.title("Square root error between GPS and CV2 translations")
-            print("Average GPS translation error (m): " + str(np.mean(stat_filter(pos_error, 0.9))) + " (" +str(np.std(pos_error))+ ")")
-            plt.plot(times[1:], pos_error)
-        plt.xlabel("Time (s)")
-        plt.ylabel("Error (m)")
-
+            axis = ["x-axis", "y-axis", "z-axis"]
+            for i in range(len(axis)):  
+                plt.figure()  
+                plt.xlabel("Time (s)")
+                plt.ylabel("Error (m)")
+                if hasattr(self,"groundtruth"):
+                    plt.title("Error of GPS and CV2 translations with groundtruth along " + axis[i])
+                    plt.plot(times[1:], np.array(pos_error_gps)[:,i], label="GPS")
+                    plt.plot(times[1:], np.array(pos_error_cv2)[:,i], label="CV2")                    
+                    plt.legend()
+                else:
+                    plt.title("Error between GPS and CV2 translations along " + axis[i])
+                    plt.plot(times[1:], np.array(pos_error)[:,i])
+                        
         plt.figure()
-        if hasattr(self,"groundtruth"):
-            print("Average GPS rotation error (deg): " + str(np.rad2deg(np.mean(stat_filter(att_error_gps, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error_gps)))+ ")")
-            print("Average cv2 rotation error (deg): " + str(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error_cv2)))+ ")")
-            plt.title("Error of GPS and CV2 rotations with groundtruth")
-            plt.plot(times[1:], att_error_gps, label="GPS")
-            plt.plot(times[1:], att_error_cv2, label="CV2")
-            plt.legend()
-        else:
-            print("Average GPS rotation error (rad): " + str(np.rad2deg(np.mean(stat_filter(att_error, 0.9)))) + " (" +str(np.rad2deg(np.std(att_error)))+ ")")
-            plt.title("Error between GPS and CV2 rotations")
-            plt.plot(times[1:], att_error)   
+        if grouped:            
+            if hasattr(self,"groundtruth"):
+                plt.title("Squared error of GPS and CV2 rotations with groundtruth")
+                plt.plot(times[1:], abs(att_error_gps), label="GPS")
+                plt.plot(times[1:], abs(att_error_cv2), label="CV2")
+                plt.legend()
+            else:
+                plt.title("Squared error between GPS and CV2 rotations")
+                plt.plot(times[1:], abs(att_error))
+        else:           
+            if hasattr(self,"groundtruth"):
+                plt.title("Error of GPS and CV2 rotations with groundtruth")
+                plt.plot(times[1:], att_error_gps, label="GPS")
+                plt.plot(times[1:], att_error_cv2, label="CV2")
+                plt.legend()
+            else:
+                plt.title("Error between GPS and CV2 rotations") 
+                plt.plot(times[1:], att_error)
         plt.xlabel("Time (s)")
         plt.ylabel("Error (rad)")
+                
+        if hasattr(self,"groundtruth"):
+            print("Average GPS translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_gps, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_gps, axis=0), 5))+ ")")
+            print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_cv2, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_cv2, axis=0), 5))+ ")")
+            print("Average GPS rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_gps, 0.9))),5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_gps)), 5))+ ")")
+            print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_cv2)), 5))+ ")")
+        else:
+            print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error, 0.9), axis=0),5)) + " (" +str(np.round(np.std(pos_error), 5), axis=0)+ ")")
+            print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
+    
+    def get_bias(self):
+        if self.bias is None:                
+            times = self.get_timestamps()       
+            t_gps = np.zeros((len(times)-1,2))
+            t_cv2 = np.zeros((len(times)-1,2))
+            r_gps = np.zeros(len(times)-1)
+            r_cv2 = np.zeros(len(times)-1)           
+            for i in range(1,len(times)):           
+                trans_cv, rotation_cv = self.heatmaps[times[i]].image_transformation_from(self.heatmaps[times[i-1]])
+                r_cv2[i-1] = rotation_cv.as_euler('zxy')[0]
+                t_cv2[i-1] = trans_cv[0:2]
+                
+                if hasattr(self,"groundtruth"):
+                    r_gps[i-1] = rotation_proj(self.get_groundtruth_att(times[i-1]), self.get_groundtruth_att(times[i])).as_euler('zxy')[0]
+                    t_gps[i-1] = self.get_groundtruth_att(times[i]).apply(self.get_groundtruth_pos(times[i]) - self.get_groundtruth_pos(times[i-1]))[0:2]             
+                else:                    
+                    r_gps[i-1] = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
+                    t_gps[i-1] = self.heatmaps[times[i]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))[0:2]
+               
+            # bias = np.array(stat_filter(t_cv2)).T.dot(np.array(stat_filter(t_gps)))
+            # U, _, V = np.linalg.svd(bias)
+            # R = V.dot(np.diag([1, np.linalg.det(V.dot(U.T))])).dot(U.T)
+            # self.bias = rot.from_dcm(np.array([[R[0,0], R[0,1], 0], [R[1,0], R[1,1], 0], [0,0,1]]))
+            
+            bias_trans = np.append(np.mean(stat_filter(t_gps - t_cv2, 0.9), axis=0), 0) 
+            bias_rot = np.mean(stat_filter(r_gps-r_cv2, 0.9), axis=0)
+            self.bias = (bias_trans, rot.from_dcm(np.array([[np.cos(bias_rot), -np.sin(bias_rot), 0], [np.sin(bias_rot), np.cos(bias_rot), 0], [0,0,1]])))
+        return self.bias
     
     def get_radardata(self, t_ini=None, t_final=None):
         """ Return radar data for time between t_ini and t_final """
