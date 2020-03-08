@@ -74,8 +74,8 @@ class RadarData:
             lin_coeff = 3.5
             threshold = 6
             const_value = 80
-            otherdata_img = increase_contrase(otherdata.img.astype(np.uint8), lin_coeff, threshold, const_value)
-            self_img = increase_contrase(self.img.astype(np.uint8), lin_coeff, threshold, const_value)
+            otherdata_img = increase_contrast(otherdata.img.astype(np.uint8), lin_coeff, threshold, const_value)
+            self_img = increase_contrast(self.img.astype(np.uint8), lin_coeff, threshold, const_value)
             
             (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria)
 
