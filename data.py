@@ -5,7 +5,7 @@ from os import path
 from PIL import Image
 from scipy.spatial.transform import Rotation as rot
  
-from utils import check_transform, rotation_proj
+from utils import check_transform, rotation_proj, increase_contrast
 
 class RadarData:
     
@@ -69,7 +69,15 @@ class RadarData:
             termination_eps = 1e-9;
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
-            (cc, warp_matrix) = cv2.findTransformECC (otherdata.img.astype(np.uint8), self.img.astype(np.uint8), warp_matrix, warp_mode, criteria)
+            
+            #increase_contrast
+            lin_coeff = 3.5
+            threshold = 6
+            const_value = 80
+            otherdata_img = increase_contrase(otherdata.img.astype(np.uint8), lin_coeff, threshold, const_value)
+            self_img = increase_contrase(self.img.astype(np.uint8), lin_coeff, threshold, const_value)
+            
+            (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria)
 
             # SIFT
             # warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
