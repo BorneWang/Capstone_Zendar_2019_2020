@@ -131,3 +131,12 @@ def increase_saturation(img):
     im = np.power(sat*img/255, gamma)*255
     im[im >= 255] = 255
     return im
+
+def increase_contrast(img, lincoe, thres, const):
+    row, col = img.shape
+    for i in range(row):
+        for j in range(col):
+            if img[i,j] > thres:
+                img[i,j] = lincoe*img[i,j] + const
+    im[im >= 255] = 255
+    return img
