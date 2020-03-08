@@ -1,27 +1,34 @@
-from PIL import Image
-import numpy as np
-from scipy.spatial.transform import Rotation as rot
 import cv2
+import pickle
+import numpy as np
+from os import path
+from PIL import Image
+from scipy.spatial.transform import Rotation as rot
 
-def check_transform(data, warp_matrix, name):
-    """ Save an image to vizualize the calculated transformation (for test purpose) """
-    Image.fromarray(cv2.warpAffine(np.array(data.img), warp_matrix, data.img.size, flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)).save(name);    
+from DBSCAN import DBSCAN_filter
+ 
+from utils import rotation_proj, increase_contrast
 
 class RadarData:
     
-    def __init__(self, img, gps_pos, attitude, precision=0.04):
+    def __init__(self, ts, img, gps_pos, attitude, precision=0.04):
+        self.id = ts
         self.precision = precision
-        self.img = img # PIL image  
+        self.img = img # array image (0-255)
         self.gps_pos = gps_pos # 1x3 array
         self.attitude = attitude # scipy quaternion
         
+    def get_img(self):
+        """ Return an image of the map (unknown area are set to zero) """ 
+        return Image.fromarray(np.nan_to_num(self.img).astype(np.uint8))
+        
     def height(self):
         """ Return max y position of a pixel in image frame """
-        return self.precision*(self.img.height-1)
+        return self.precision*(np.size(self.img,0)-1)
     
     def width(self):
         """ Return max x position of a pixel in image frame """
-        return self.precision*(self.img.width-1)
+        return self.precision*(np.size(self.img,1)-1)
         
     def meters2indices(self, point):
         """ Give the position of a pixel according its position in image frame """
@@ -35,7 +42,7 @@ class RadarData:
     
     def image_grid(self):
         """ give the position of each pixel in the image frame """
-        x, y = np.meshgrid(np.linspace(0, self.width(), self.img.width), np.linspace(0, self.height(), self.img.height))
+        x, y = np.meshgrid(np.linspace(0, self.width(), np.size(self.img,1)), np.linspace(0, self.height(), np.size(self.img,0)))
         return np.dstack((x,np.zeros(np.shape(x)),y))
         
     def earth_grid(self):
@@ -43,49 +50,120 @@ class RadarData:
         img_grid = self.image_grid()
         earth_grid = self.earth2rbd(img_grid, True) + self.gps_pos
         return np.reshape(earth_grid, np.shape(img_grid))
-        
-    def predict_image(self, gps_pos, attitude):
-        """ Give the prediction of an observation in a different position based on actual radar image """
-        #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        exp_rot = rot.as_rotvec(self.attitude.inv()*attitude)[2]
-        exp_rot_matrix = np.array([[np.cos(exp_rot), -np.sin(exp_rot)],[np.sin(exp_rot), np.cos(exp_rot)]])
-        
-        exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
-        
-        warp_matrix = np.concatenate((exp_rot_matrix, np.array([[-exp_trans[0]],[-exp_trans[1]]])), axis = 1)
-        predict_img = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 0);
-        
-        mask = cv2.warpAffine(np.array(self.img), warp_matrix, self.img.size, flags=cv2.INTER_LINEAR, borderValue = 255);
-        diff = (mask - predict_img).astype(np.float16)
-        diff[diff == 255] = np.nan
-        prediction = diff + predict_img
-                
-        #TODO: just for test and vizualisation, could be removed()
-        Image.fromarray(predict_img).save('radar2_2.png')
-        
-        return prediction
     
-    def transformation_from(self, otherdata):
+    def image_transformation_from(self, otherdata):
         """ Return the translation and the rotation based on the two radar images """
-        #TODO: 3D transformation of image (to take into account pitch and roll changes)
-        warp_mode = cv2.MOTION_EUCLIDEAN
-        number_of_iterations = 5000;
-        termination_eps = 1e-8;
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-        warp_matrix = np.eye(2, 3, dtype=np.float32)
-        (cc, warp_matrix) = cv2.findTransformECC (np.array(otherdata.img), np.array(self.img), warp_matrix, warp_mode, criteria)
-        
-        #TODO: just for test and vizualisation, could be removed()
-        check_transform(self, warp_matrix, 'radar1_1.png')
-        
-        rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[0,1], 0], [warp_matrix[1,0], warp_matrix[1,1], 0], [0,0,1]])
-        translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
-        return translation, rot_matrix
+        if path.exists("cv2_transformations.pickle"):        
+            cv2_transformations = open("cv2_transformations.pickle","rb")
+            trans_dict = pickle.load(cv2_transformations)
+            cv2_transformations.close()
+        else:
+            trans_dict = dict()
+            
+        if str(self.id)+"-"+str(otherdata.id) in trans_dict:
+            translation, rotation = trans_dict[str(self.id)+"-"+str(otherdata.id)]
+        else:
+            print("Calculating transformation", self.id, "-", otherdata.id)
+         
+            # ECC
+            warp_mode = cv2.MOTION_EUCLIDEAN
+            number_of_iterations = 625;
+            termination_eps = 1e-9;
+            criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
+            warp_matrix = np.eye(2, 3, dtype=np.float32)
+            
+            #overlap
+            new_selfdata, new_otherdata = self.image_overlap(otherdata)
+            
+            #Thresholding + DBSCAN
+            new_otherdata = DBSCAN_filter(new_otherdata.astype(np.uint8))
+            new_selfdata = DBSCAN_filter(new_selfdata.astype(np.uint8))
+            
+            
+            #increase_contrast
+            lin_coeff = 3.5
+            threshold = 6
+            const_value = 80
+            new_otherdata = increase_contrast(new_otherdata, lin_coeff, threshold, const_value)
+            new_selfdata = increase_contrast(new_selfdata, lin_coeff, threshold, const_value)
+            
+            
+            #(cc, warp_matrix) = cv2.findTransformECC (otherdata.img.astype(np.uint8), self.img.astype(np.uint8), 
+            #                                         warp_matrix, warp_mode, criteria, None, 1)
+            (cc, warp_matrix) = cv2.findTransformECC (new_otherdata, new_selfdata, 
+                                                     warp_matrix, warp_mode, criteria)
+            # SIFT
+            # warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
+            
+            rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
+            translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
+            rotation = rot.from_dcm(rot_matrix)
+            
+            if not (otherdata.id == -1 or self.id == -1):      
+                cv2_transformations = open("cv2_transformations.pickle","wb")
+                trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
+                pickle.dump(trans_dict, cv2_transformations)
+                cv2_transformations.close()  
+            
+        # just for test and vizualisation, could be removed()
+        # check_transform(self, rotation, translation, 'radar1_1.png')
+            
+        return translation, rotation
     
     def image_position_from(self, otherdata):
         """ Return the actual position and attitude based on radar images comparison """
-        translation, rotation = self.transformation_to(otherdata)
+        translation, rotation = self.image_transformation_from(otherdata)
         
-        gps_pos = otherdata.gps_pos + translation
-        attitude = (self.attitude*rot.from_dcm(rotation)).as_quat()
+        gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
+        # TODO: check rotation application
+        attitude = rotation.inv()*otherdata.attitude
         return gps_pos, attitude
+    
+    def predict_image(self, gps_pos, attitude):
+        """ Give the prediction of an observation in a different position based on actual radar image """
+        exp_rot_matrix = rotation_proj(self.attitude, attitude).as_dcm()[:2,:2]
+        
+        exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
+        
+        shape = (np.shape(self.img)[1], np.shape(self.img)[0])
+        warp_matrix = np.concatenate((exp_rot_matrix, np.array([[-exp_trans[0]],[-exp_trans[1]]])), axis = 1)
+        predict_img = cv2.warpAffine(self.img, warp_matrix, shape, flags=cv2.INTER_LINEAR, borderValue = 0);
+        
+        mask = cv2.warpAffine(np.ones(np.shape(self.img)), warp_matrix, shape, flags=cv2.INTER_LINEAR, borderValue = 0);
+        diff = mask - np.ones(np.shape(self.img))
+        diff[diff != -1] = 0
+        diff[diff == -1] = np.nan
+        prediction = diff + predict_img
+
+        # just for test and vizualisation, could be removed()
+        # Image.fromarray(predict_img).save('radar2_2.png')
+
+        return prediction
+    
+    def image_overlap(self,data2):
+    
+        w1 = np.ones(np.shape(self.img))
+        w2 = np.ones(np.shape(data2.img))
+    
+        white_1 = RadarData(0,w1,self.gps_pos,self.attitude)
+        white_2 = RadarData(0,w2,data2.gps_pos,data2.attitude)
+    
+        mask1 = white_1.predict_image(data2.gps_pos,data2.attitude)
+        mask2 = white_2.predict_image(self.gps_pos,self.attitude)
+    
+        out1 = np.ones(np.shape(data2.img))
+        row, col = np.shape(data2.img)
+        for i in range(row):
+            for j in range(col):
+                if mask1[i][j] == 1:
+                    out1[i][j] = data2.img[i][j]
+    #out1[mask1==1] = data2.img
+    
+        out2 = np.ones(np.shape(self.img))
+    #out2[mask2==1] = data1.img
+        for i in range(row):
+            for j in range(col):
+                if mask2[i][j] == 1:
+                    out2[i][j] = self.img[i][j]
+    
+        return out2, out1
