@@ -138,5 +138,5 @@ def increase_contrast(img, lincoe, thres, const):
         for j in range(col):
             if img[i,j] > thres:
                 img[i,j] = lincoe*img[i,j] + const
-    im[im >= 255] = 255
+    img[img >= 255] = 255
     return img
