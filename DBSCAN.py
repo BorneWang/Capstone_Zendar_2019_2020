@@ -18,7 +18,7 @@ from sklearn.cluster import DBSCAN
 
 def DBSCAN_filter(im):
     row, col = im.shape
-    blur1 = cv2.GaussianBlur(im,(9,9),1)
+    blur1 = cv2.GaussianBlur(im,(9,9),0)
     ret1,th1 = cv2.threshold(blur1,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
     
     #th3 = cv2.adaptiveThreshold(im,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,\
