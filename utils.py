@@ -1,3 +1,4 @@
+import os
 import cv2
 import pyproj
 import pickle
@@ -7,13 +8,50 @@ from pykml import parser
 from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
+from sklearn.cluster import DBSCAN
 from scipy.spatial.transform import Rotation as rot
 
+def preprocessor(img):
+    """ Handle the preprocessor function if defined in main.py """
+    if "preprocessor" in dir(os):
+        return preprocessor(img).astype(np.uint8)
+    else:
+        return img.astype(np.uint8)
+
+def increase_contrast(img, lin_coeff, threshold, offset):
+    """ Increase contrast in the image """
+    mask = (img >= threshold)
+    # TODO: discuss what to do below threshold
+    img = np.multiply(mask, lin_coeff*img + offset) + np.multiply(np.logical_not(mask), img)
+    img[img >= 255] = 255
+    return img.astype(np.uint8)
+
+def DBSCAN_filter(im, kernel, scale, binary=True):
+    """ Filter images to binary based on DBSCAN clustering """
+    blur1 = cv2.GaussianBlur(im, kernel, scale)
+    ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+
+    X = np.transpose(np.nonzero(th1))
+    db = DBSCAN(eps=2.0, min_samples=10).fit(X)
+    np.put(th1, X, db.labels_ > -1)
+    if binary:        
+        return th1.astype(np.uint8)
+    else:
+        return np.multiply(im, th1)
+
+def increase_saturation(img):
+    """ Increase saturation of an image """
+    sat = 1.7
+    gamma = 1.2
+    im = np.power(sat*img/255, gamma)*255
+    im[im >= 255] = 255
+    return im
+
 def figure_save(number, name):
-    pickle.dump(plt.figure(number), open(str(name)+'.pickle', 'wb'))
+    pickle.dump(plt.figure(number), open("Figures/"+str(name)+'.pickle', 'wb'))
 
 def import_figure(name):
-    fig = pickle.load(open(str(name)+'.pickle', 'rb'))
+    fig = pickle.load(open("Figures/"+str(name)+'.pickle', 'r b'))
     fig.show()
 
 def stat_test(Y, Yhat, S, p):
@@ -107,36 +145,16 @@ def check_transform(data, rotation, translation, name):
     warp_matrix = np.concatenate(((rotation.as_dcm()[:2,:2]).T,np.array([[-translation[0]],[-translation[1]]])), axis = 1)
     Image.fromarray(cv2.warpAffine(data.img, warp_matrix, shape, flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)).save(name);    
 
-def merge_img(img1, img2, P1, P2, P_start, P_end):
+def merge_img(img1, img2, P1, P2):
     """ Merge two images pixel by pixel, weighted by uncertainty, only in modified area """
     img = deepcopy(img1)
     cov_img = deepcopy(P1)
-    for i in range(max(0,P_start[1]), min(P_end[1], np.size(img1, 0))):
-        for j in range(max(0,P_start[0]), min(P_end[0], np.size(img1, 1))):
-            if np.isnan(img1[i][j]):
-                img[i][j] = deepcopy(img2[i][j])
-                cov_img[i][j] = deepcopy(P2[i][j])
-            elif np.isnan(img2[i][j]):
-                img[i][j] = deepcopy(img1[i][j])
-                cov_img[i][j] = deepcopy(P1[i][j])
-            else:
-                img[i][j] = round((img1[i][j]*P2[i][j] + img2[i][j]*P1[i][j])/(P1[i][j]+P2[i][j]))
-                cov_img[i][j] = P1[i][j]*P2[i][j]/(P1[i][j] + P2[i][j])
+     
+    mask1 = np.isnan(img1)
+    mask2 = np.isnan(img2)
+    
+    np.putmask(img, mask1, img2)
+    np.putmask(cov_img, mask1, P2)
+    np.putmask(img, np.logical_and(np.logical_not(mask1), np.logical_not(mask2)), np.round(np.divide(np.multiply(img1, P2) + np.multiply(img2, P1), P1 + P2)))
+    np.putmask(cov_img, np.logical_and(np.logical_not(mask1), np.logical_not(mask2)), np.divide(np.multiply(P1, P2), P1 + P2))
     return img, cov_img
-
-def increase_saturation(img):
-    """ Increase saturation of an image """
-    sat = 1.7
-    gamma = 1.2
-    im = np.power(sat*img/255, gamma)*255
-    im[im >= 255] = 255
-    return im
-
-def increase_contrast(img, lincoe, thres, const):
-    row, col = img.shape
-    for i in range(row):
-        for j in range(col):
-            if img[i,j] > thres:
-                img[i,j] = lincoe*img[i,j] + const
-    img[img >= 255] = 255
-    return img
