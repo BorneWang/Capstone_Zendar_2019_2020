@@ -29,7 +29,7 @@ def increase_contrast(img, lin_coeff, threshold, offset):
 def DBSCAN_filter(im, kernel, scale, binary=True):
     """ Filter images to binary based on DBSCAN clustering """
     blur1 = cv2.GaussianBlur(im, kernel, scale)
-    ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    ret1,th1 = cv2.threshold(blur1,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
     X = np.transpose(np.nonzero(th1))
     db = DBSCAN(eps=2.0, min_samples=10).fit(X)
@@ -51,7 +51,7 @@ def figure_save(number, name):
     pickle.dump(plt.figure(number), open("Figures/"+str(name)+'.pickle', 'wb'))
 
 def import_figure(name):
-    fig = pickle.load(open("Figures/"+str(name)+'.pickle', 'r b'))
+    fig = pickle.load(open("Figures/"+str(name)+'.pickle', 'rb'))
     fig.show()
 
 def stat_test(Y, Yhat, S, p):

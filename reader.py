@@ -51,7 +51,7 @@ class Reader:
         times = list(aperture.keys())
            
         t0 = float(times[0])       
-        times = [times[i] for i in range(len(times)) if float(times[i])-t0>t_ini and float(times[i])-t0<t_final]
+        times = [times[i] for i in range(len(times)) if float(times[i])-t0>=t_ini and float(times[i])-t0<t_final]
         prev_perc = -1
         for i, t in enumerate(times):
             if np.floor(i/(len(times)-1)*10) != prev_perc:
@@ -77,7 +77,11 @@ class Reader:
                 gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
                 gt_att.append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
                 gt_time.append(float(t)-float(times[0]))
-                
+            
+            if times_gt[0]> times[0] or times_gt[-1]<times[-1]:
+                for t in times:
+                    if times_gt[0] > t or times_gt[-1] < t:
+                        self.heatmaps.pop(float(t)-float(times[0]))
             times = list(self.heatmaps.keys())
             slerp = Slerp(gt_time, rot.from_quat([r.as_quat() for r in gt_att]))
             gt_att = [rot.from_quat(q) for q in slerp(times).as_quat()]
@@ -113,19 +117,6 @@ class Reader:
         fig.canvas.mpl_connect('button_press_event', onClick)
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         return ani
-     
-    def get_timestamps(self, t_ini=None, t_final=None):
-        """ Return a list of data timestamps between t_ini and t_final """
-        times = list(self.heatmaps.keys())
-        if (t_ini is None) or (t_ini == 0 and t_final==np.inf):
-            return times
-        else:
-            times.sort()
-            if t_final is None:
-                t_adj = times[min(range(len(times)), key = lambda i: abs(times[i]-t_ini))]
-                return t_adj
-            else:    
-                return [t for t in times if t>=t_ini and t<=t_final]
     
     def plot_evaluation(self, corrected = False, grouped = True):
         """ Evaluate the transformation given in GPS data information compared to CV2 image analysis """ 
@@ -241,16 +232,31 @@ class Reader:
                 else:                    
                     r_gps[i-1] = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
                     t_gps[i-1] = self.heatmaps[times[i]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))[0:2]
-               
-            # bias = np.array(stat_filter(t_cv2)).T.dot(np.array(stat_filter(t_gps)))
+            
+            # bias = np.array(t_cv2 - np.mean(t_cv2, axis=0)).T.dot(np.array(t_gps - np.mean(t_gps, axis=0)))
             # U, _, V = np.linalg.svd(bias)
             # R = V.dot(np.diag([1, np.linalg.det(V.dot(U.T))])).dot(U.T)
-            # self.bias = rot.from_dcm(np.array([[R[0,0], R[0,1], 0], [R[1,0], R[1,1], 0], [0,0,1]]))
+            # self.bias = (np.mean(t_gps, axis=0) - R.dot(np.mean(t_cv2, axis=0)), rot.from_dcm(np.array([[R[0,0], R[0,1], 0], [R[1,0], R[1,1], 0], [0,0,1]])))
             
+            # Brutal mean
             bias_trans = np.append(np.mean(stat_filter(t_gps - t_cv2, 0.9), axis=0), 0) 
             bias_rot = np.mean(stat_filter(r_gps-r_cv2, 0.9), axis=0)
             self.bias = (bias_trans, rot.from_dcm(np.array([[np.cos(bias_rot), -np.sin(bias_rot), 0], [np.sin(bias_rot), np.cos(bias_rot), 0], [0,0,1]])))
         return self.bias
+    
+         
+    def get_timestamps(self, t_ini=None, t_final=None):
+        """ Return a list of data timestamps between t_ini and t_final """
+        times = list(self.heatmaps.keys())
+        if (t_ini is None) or (t_ini == 0 and t_final==np.inf):
+            return times
+        else:
+            times.sort()
+            if t_final is None:
+                t_adj = times[min(range(len(times)), key = lambda i: abs(times[i]-t_ini))]
+                return t_adj
+            else:    
+                return [t for t in times if t>=t_ini and t<=t_final]
     
     def get_radardata(self, t_ini=None, t_final=None):
         """ Return radar data for time between t_ini and t_final """
@@ -264,18 +270,39 @@ class Reader:
             else:
                 return np.array([self.heatmaps[t] for t in times])
             
-    def get_img(self, t_ini=None, t_final=None):
-        """ Return radar data image for time between t_ini and t_final """
+    def get_img(self, t):
+        """ Return radar data image at time t """
+        times = self.get_timestamps(t)
+        return Image.fromarray(self.heatmaps[times].img)
+
+    def get_groundtruth_pos(self,t_ini=None, t_final=None):
+        """ Return groundtruth position for time between t_ini and t_final """        
+        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
+        
         if t_ini is None:
             times = self.get_timestamps()
-            return np.array([Image.fromarray(self.heatmaps[t].img) for t in times])
-        else:
+            return np.array([self.groundtruth[t]['POSITION'] for t in times])
+        else:     
             times = self.get_timestamps(t_ini, t_final)
             if t_final is None:
-                return Image.fromarray(self.heatmaps[times].img)
+                return self.groundtruth[times]['POSITION']
             else:
-                return np.array([Image.fromarray(self.heatmaps[t].img) for t in times])
+                return np.array([self.groundtruth[t]['POSITION'] for t in times])
+
+    def get_groundtruth_att(self,t_ini=None, t_final=None):
+        """ Return groundtruth attitude for time between t_ini and t_final """        
+        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
         
+        if t_ini is None:
+            times = self.get_timestamps()
+            return [self.groundtruth[t]['ATTITUDE'] for t in times]
+        else:     
+            times = self.get_timestamps(t_ini, t_final)
+            if t_final is None:
+                return self.groundtruth[times]['ATTITUDE']
+            else:
+                return [self.groundtruth[t]['ATTITUDE'] for t in times]
+            
     def get_gps_pos(self,t_ini=None, t_final=None):
         """ Return GPS position for time between t_ini and t_final """
         if t_ini is None:
@@ -299,7 +326,7 @@ class Reader:
                 return self.heatmaps[times].attitude
             else:
                 return [self.heatmaps[t].attitude for t in times]
-      
+            
     def get_gps_speed(self, t_ini=None, t_final=None):
         """ Return GPS speed for time between t_ini and t_final """
         if t_ini is None:
@@ -317,33 +344,4 @@ class Reader:
                 for i in range(len(times)-1):
                     out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
                 return out
-          
-    def get_groundtruth_pos(self,t_ini=None, t_final=None):
-        """ Return groundtruth position for time between t_ini and t_final """
-        
-        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
-        
-        if t_ini is None:
-            times = self.get_timestamps()
-            return np.array([self.groundtruth[t]['POSITION'] for t in times])
-        else:     
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.groundtruth[times]['POSITION']
-            else:
-                return np.array([self.groundtruth[t]['POSITION'] for t in times])
-
-    def get_groundtruth_att(self,t_ini=None, t_final=None):
-        """ Return groundtruth attitude for time between t_ini and t_final """
-        
-        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
-        
-        if t_ini is None:
-            times = self.get_timestamps()
-            return [self.groundtruth[t]['ATTITUDE'] for t in times]
-        else:     
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.groundtruth[times]['ATTITUDE']
-            else:
-                return [self.groundtruth[t]['ATTITUDE'] for t in times]
+ 

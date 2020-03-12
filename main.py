@@ -4,16 +4,28 @@ from reader import Reader
 from recorder import Recorder
 from kalman import Kalman_Mapper_GPSCV2_3D, Kalman_Localizer
 
+from utils import DBSCAN_filter
+
 warnings.filterwarnings("ignore") 
+
+# =============================================================================
+# Preprocessing of images
+# =============================================================================
+
+def preprocessor(img):
+    """ Succession of operation to apply to radar image for preprocessing """
+    # comment and use radardat_ic if increasing contrast should be used
+    img = DBSCAN_filter(img, kernel=(9,9), scale=1, binary=True) # use radardata_norm if used
+    return img
 
 # =============================================================================
 # Mapping
 # =============================================================================
 
-# Loading data   
-reader = Reader('radardata2.h5', 0, np.inf)
+# Loading data
+reader = Reader('radardata2_norm.h5', 0, np.inf)
 
-kalman = Kalman_Mapper_GPSCV2_3D(False) # Creating Kalman filter for mapping
+kalman = Kalman_Mapper_GPSCV2_3D(True) # Creating Kalman filter
 
 #TODO: decide more precisely covariances
 kalman.set_covariances(0.015, np.deg2rad(0.018), 0.035, np.deg2rad(0.099))
@@ -44,10 +56,10 @@ recorder.plot_kalman_evaluation()
 # =============================================================================
 """
 # Loading data   
-reader = Reader('radardata2.h5', 10, 15)
+reader = Reader('radardata2.h5', 275, 360)
 
 # Creating Kalman filter for mapping
-kalman = Kalman_Localizer(False, "map_20200222_1456")
+kalman = Kalman_Localizer(False, "map_20200307_1744")
 # Initialize the first position and attitude
 # kalman.set_initial_position(reader.groundtruth['POSITION'][0], reader.groundtruth['ATTITUDE'][0])
 kalman.set_initial_position(reader.get_radardata(0).gps_pos, reader.get_radardata(0).attitude)
@@ -59,7 +71,7 @@ for ts, radardata in reader:
     pos, att = kalman.localize(radardata)
     # save Kalman output
     recorder.record(ts)
-    # update the map during mapping
+    # see the map during localization
     #kalman.mapdata.show(pos)
 
 # Plots

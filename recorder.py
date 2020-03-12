@@ -37,7 +37,7 @@ class Recorder:
 
         coords = ecef2lla(rbd_translate(self.get_measured_positions(), self.get_measured_attitudes(), self.reader.tracklog_translation))
         gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'red', edge_width = 2.5)
-        
+
         if len(self.get_positions())!=0:
             coords = ecef2lla(rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation))
             gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'cornflowerblue', edge_width = 2.5)
@@ -73,7 +73,7 @@ class Recorder:
             arrows = np.array([att0.apply(data.earth2rbd([0,-1,0], True)) for data in self.reader.get_radardata()])
             for i in range(0, len(arrows), 5):
                 plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
-        
+
         pos = rbd_translate(self.get_measured_positions(), self.get_measured_attitudes(), self.reader.tracklog_translation)
         trajectory = att0.apply(pos - pos[0])        
         plt.plot(trajectory[:,0], trajectory[:,1], 'r', label="CV2", picker=True)
@@ -81,7 +81,7 @@ class Recorder:
             arrows = np.array([att0.apply(att.apply([0,-1,0], True)) for att in self.get_measured_attitudes()])
             for i in range(0, len(arrows), 5):
                 plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
-                
+  
         if corrected:
             pos = rbd_translate(self.get_measured_positions(corrected), self.get_measured_attitudes(corrected), self.reader.tracklog_translation)
             trajectory = att0.apply(pos - pos[0])        

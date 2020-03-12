@@ -5,7 +5,7 @@ from os import path
 from PIL import Image
 from scipy.spatial.transform import Rotation as rot
  
-from utils import check_transform, rotation_proj, increase_contrast
+from utils import rotation_proj, preprocessor
 
 class RadarData:
     
@@ -39,7 +39,7 @@ class RadarData:
         return self.attitude.apply(pos, inverse)
     
     def image_grid(self):
-        """ give the position of each pixel in the image frame """
+        """ Give the position of each pixel in the image frame """
         x, y = np.meshgrid(np.linspace(0, self.width(), np.size(self.img,1)), np.linspace(0, self.height(), np.size(self.img,0)))
         return np.dstack((x,np.zeros(np.shape(x)),y))
         
@@ -63,24 +63,23 @@ class RadarData:
         else:
             print("Calculating transformation")
          
+            # Restrict to predicted overlap
+            self_img, otherdata_img = self.image_overlap(otherdata)
+            
+            # Preprocessing
+            otherdata_img = preprocessor(otherdata_img)
+            self_img = preprocessor(self_img)
+           
             # ECC
             warp_mode = cv2.MOTION_EUCLIDEAN
             number_of_iterations = 625;
             termination_eps = 1e-9;
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
-            
-            #increase_contrast
-            lin_coeff = 3.5
-            threshold = 6
-            const_value = 80
-            otherdata_img = increase_contrast(otherdata.img.astype(np.uint8), lin_coeff, threshold, const_value)
-            self_img = increase_contrast(self.img.astype(np.uint8), lin_coeff, threshold, const_value)
-            
             (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria)
 
             # SIFT
-            # warp_matrix = cv2.estimateRigidTransform(otherdata.img.astype(np.uint8), self.img.astype(np.uint8), False)
+            # warp_matrix = cv2.estimateRigidTransform(otherdata_img, self_img, False)
             
             rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
             translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
@@ -140,4 +139,4 @@ class RadarData:
     
         out1 = np.multiply(mask1, self.img)
         out2 = np.multiply(mask2, data2.img)
-        return out1, out2
+        return out1.astype(np.uint8), out2.astype(np.uint8)
