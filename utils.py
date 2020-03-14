@@ -29,15 +29,15 @@ def increase_contrast(img, lin_coeff, threshold, offset):
 def DBSCAN_filter(im, kernel, scale, binary=True):
     """ Filter images to binary based on DBSCAN clustering """
     blur1 = cv2.GaussianBlur(im, kernel, scale)
-    ret1,th1 = cv2.threshold(blur1,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
     X = np.transpose(np.nonzero(th1))
-    db = DBSCAN(eps=2.0, min_samples=10).fit(X)
-    np.put(th1, X, db.labels_ > -1)
+    db = DBSCAN(eps=5, min_samples=30).fit(X)
+    np.place(th1, th1, db.labels_ > -1)
     if binary:        
-        return th1.astype(np.uint8)
+        return (255*th1).astype(np.uint8)
     else:
-        return np.multiply(im, th1)
+        return np.multiply(im, th1).astype(np.uint8)
 
 def increase_saturation(img):
     """ Increase saturation of an image """
