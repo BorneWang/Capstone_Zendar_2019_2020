@@ -1,4 +1,3 @@
-import os
 import cv2
 import pyproj
 import pickle
@@ -13,10 +12,8 @@ from scipy.spatial.transform import Rotation as rot
 
 def preprocessor(img):
     """ Handle the preprocessor function if defined in main.py """
-    if "preprocessor" in dir(os):
-        return preprocessor(img).astype(np.uint8)
-    else:
-        return img.astype(np.uint8)
+    # comment and use radardat_ic if increasing contrast should be used
+    return DBSCAN_filter(img, kernel=(9,9), scale=1, binary=True) # use radardata_norm if used
 
 def increase_contrast(img, lin_coeff, threshold, offset):
     """ Increase contrast in the image """
@@ -30,7 +27,7 @@ def DBSCAN_filter(im, kernel, scale, binary=True):
     """ Filter images to binary based on DBSCAN clustering """
     blur1 = cv2.GaussianBlur(im, kernel, scale)
     ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-
+    
     X = np.transpose(np.nonzero(th1))
     db = DBSCAN(eps=5, min_samples=30).fit(X)
     np.place(th1, th1, db.labels_ > -1)

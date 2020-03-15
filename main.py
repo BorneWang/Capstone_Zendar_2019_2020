@@ -9,21 +9,11 @@ from utils import DBSCAN_filter
 warnings.filterwarnings("ignore") 
 
 # =============================================================================
-# Preprocessing of images
-# =============================================================================
-
-def preprocessor(img):
-    """ Succession of operation to apply to radar image for preprocessing """
-    # comment and use radardat_ic if increasing contrast should be used
-    img = DBSCAN_filter(img, kernel=(9,9), scale=1, binary=True) # use radardata_norm if used
-    return img
-
-# =============================================================================
 # Mapping
 # =============================================================================
 
 # Loading data
-reader = Reader('radardata2_norm.h5', 0, np.inf)
+reader = Reader('radardata2_new_norm.h5', 0, np.inf)
 
 kalman = Kalman_Mapper_GPSCV2_3D(True) # Creating Kalman filter
 
