@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation as rot
 def preprocessor(img):
     """ Handle the preprocessor function if defined in main.py """
     # comment and use radardat_ic if increasing contrast should be used
-    return DBSCAN_filter(img, kernel=(9,9), scale=1, binary=True) # use radardata_norm if used
+    return DBSCAN_filter(img, kernel=(9,9), scale=1, binary=False) # use radardata_norm if used
 
 def increase_contrast(img, lin_coeff, threshold, offset):
     """ Increase contrast in the image """
@@ -26,10 +26,9 @@ def increase_contrast(img, lin_coeff, threshold, offset):
 def DBSCAN_filter(im, kernel, scale, binary=True):
     """ Filter images to binary based on DBSCAN clustering """
     blur1 = cv2.GaussianBlur(im, kernel, scale)
-    ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    ret1,th1 = cv2.threshold(blur1, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    X = np.transpose(np.nonzero(th1))
-    db = DBSCAN(eps=5, min_samples=30).fit(X)
+    db = DBSCAN(eps=5, min_samples=30).fit(np.transpose(np.nonzero(th1)))
     np.place(th1, th1, db.labels_ > -1)
     if binary:        
         return (255*th1).astype(np.uint8)
@@ -144,8 +143,8 @@ def check_transform(data, rotation, translation, name):
 
 def merge_img(img1, img2, P1, P2):
     """ Merge two images pixel by pixel, weighted by uncertainty, only in modified area """
-    img = deepcopy(img1)
-    cov_img = deepcopy(P1)
+    img = preprocessor(deepcopy(img1))
+    cov_img = preprocessor(deepcopy(P1))
      
     mask1 = np.isnan(img1)
     mask2 = np.isnan(img2)
