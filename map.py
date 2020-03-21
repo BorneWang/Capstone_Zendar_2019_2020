@@ -111,27 +111,26 @@ class Map():
         
         img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(otherdata)
         shape = np.shape(img1)
+        
         v2 = self.attitude.apply(otherdata.gps_pos - new_origin)[0:2]/self.precision
         M2 = np.concatenate((rotation_proj(self.attitude, otherdata.attitude).as_dcm()[:2,:2],np.array([[v2[0]],[v2[1]]])), axis = 1)
         img2 = cv2.warpAffine(otherdata.img, M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
-        cov_img2 = cv2.warpAffine(self.img_cov*np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         mask = cv2.warpAffine(np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0);
         diff = mask - np.ones(shape)
         diff[diff != 0] = np.nan
         img2 = diff + img2
+        
+        cov_img2 = cv2.warpAffine(self.img_cov*np.ones(np.shape(otherdata.img)), M2, (shape[1], shape[0]), flags=cv2.INTER_LINEAR, borderValue = 0)
         cov_img2 = diff + cov_img2
 
-        P_start = np.floor((P9 - self.attitude.apply(new_origin - self.gps_pos)[0:2])/self.precision).astype(np.int)
-        P_end = np.ceil((P10 - self.attitude.apply(new_origin - self.gps_pos)[0:2])/self.precision).astype(np.int)
-
-        img, cov_img = merge_img(img1, img2, cov_img1, cov_img2, P_start, P_end)
+        img, cov_img = merge_img(img1, img2, cov_img1, cov_img2)
         self.update_map(img, cov_img, new_origin)
         return img1, img2, v2
         
     def show(self, gps_pos = None):
         """ Show a matplotlib representation of the map """
         # Parameter for the map display
-        speed_trans = 50
+        speed_trans = 100
         speed_scroll = 0.1
         shape = (1000, 2000)
         scroll_limit = 0.4
@@ -210,7 +209,6 @@ class Map():
 
         P_start = self.attitude.apply(new_origin - gps_pos)[0:2]/self.precision
         R = rotation_proj(self.attitude, attitude).inv().as_dcm()[:2,:2]
-        #M2 = np.concatenate((R, R.dot(np.array([[P_start[0]],[P_start[1]]]))), axis = 1)
         M2 = np.concatenate((R,R.dot(np.array([[P_start[0]],[P_start[1]]]))), axis = 1)
 
         M2 = scale*np.eye(2).dot(M2)
