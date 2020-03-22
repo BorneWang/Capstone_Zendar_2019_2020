@@ -204,15 +204,26 @@ class Reader:
                 plt.plot(times[1:], att_error)
         plt.xlabel("Time (s)")
         plt.ylabel("Error (rad)")
-                
-        if hasattr(self,"groundtruth"):
-            print("Average GPS translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_gps, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_gps, axis=0), 5))+ ")")
-            print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_cv2, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_cv2, axis=0), 5))+ ")")
-            print("Average GPS rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_gps, 0.9))),5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_gps)), 5))+ ")")
-            print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_cv2)), 5))+ ")")
+        
+        if grouped:
+            if hasattr(self,"groundtruth"):
+                print("Average GPS translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_gps, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_gps, axis=1), axis=0), 5))+ ")")
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_cv2, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_cv2, axis=1), axis=0), 5))+ ")")
+                print("Average GPS rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error_gps, 0.9)))),5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error_gps))), 5))+ ")")
+                print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error_cv2, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error_cv2))), 5))+ ")")
+            else:
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error, 0.9), axis=1), axis=0),5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error, axis=1), axis=0), 5))+ ")")
+                print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error))), 5))+ ")")
+
         else:
-            print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error, 0.9), axis=0),5)) + " (" +str(np.round(np.std(pos_error), 5), axis=0)+ ")")
-            print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
+            if hasattr(self,"groundtruth"):
+                print("Average GPS translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_gps, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_gps, axis=0), 5))+ ")")
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error_cv2, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(pos_error_cv2, axis=0), 5))+ ")")
+                print("Average GPS rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_gps, 0.9))),5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_gps)), 5))+ ")")
+                print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_cv2)), 5))+ ")")
+            else:
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error, 0.9), axis=0),5)) + " (" +str(np.round(np.std(pos_error), 5), axis=0)+ ")")
+                print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
     
     def get_bias(self):
         if self.bias is None:                
