@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation as rot
 def preprocessor(img):
     """ Handle the preprocessor function if defined in main.py """
     # comment and use radardat_ic if increasing contrast should be used
-    return DBSCAN_filter(img, kernel=(9,9), scale=1, binary=False) # use radardata_norm if used
+    return DBSCAN_filter(img, kernel=(9,9), scale=0, binary=False) # use radardata_norm if used
 
 def increase_contrast(img, lin_coeff, threshold, offset):
     """ Increase contrast in the image """
@@ -143,8 +143,8 @@ def check_transform(data, rotation, translation, name):
 
 def merge_img(img1, img2, P1, P2):
     """ Merge two images pixel by pixel, weighted by uncertainty, only in modified area """
-    img = preprocessor(deepcopy(img1))
-    cov_img = preprocessor(deepcopy(P1))
+    img = deepcopy(img1)
+    cov_img = deepcopy(P1)
      
     mask1 = np.isnan(img1)
     mask2 = np.isnan(img2)
