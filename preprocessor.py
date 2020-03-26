@@ -13,7 +13,21 @@ import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 from scipy.interpolate import interp1d
 from statistics import stdev
-from utils import DBSCAN_filter
+from sklearn.cluster import DBSCAN
+
+def DBSCAN_filter(im, kernel, scale, binary=True):
+    """ Filter images to binary based on DBSCAN clustering """
+    blur1 = cv2.GaussianBlur(im, kernel, scale)
+    ret1,th1 = cv2.threshold(blur1,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+
+    X = np.transpose(np.nonzero(th1))
+    db = DBSCAN(eps=5.0, min_samples=30).fit(X)
+    np.place(th1, th1, db.labels_ > -1)
+    print("binary is :", binary)
+    if binary:        
+        return (255*th1).astype(np.uint8)
+    else:
+        return np.multiply(im, th1).astype(np.uint8)
 
 class Preprocessor:
     def __init__(self, src, goal, groundtruth, log = True, loaddata = False, init_load = 0, DBSCAN = True, mean = -1, std = -1):
@@ -238,7 +252,7 @@ class Preprocessor:
         batch = 50
         ite = len(self.keys)//batch
         for i in list(np.linspace(0,(ite-1)*batch,ite).astype('int')):
-            path = 'backup/' + str(i) + '.h5'
+            path = 'backup_vn_0217\\' + str(i) + '.h5'
             print('back up file:', path)
             f_backup = h5py.File(path,'r')
             aperture_backup = f_backup['radar']['broad01']['aperture2D']
@@ -251,8 +265,8 @@ class Preprocessor:
                     self.images.append(img[...])
 
             f_backup.close()
-         
-        path = 'backup/' + 'rest' + '.h5'
+        
+        path = 'backup_vn_0217\\' + 'rest' + '.h5'
         print('back up file:', path)
         f_backup = h5py.File(path,'r')
         aperture_backup = f_backup['radar']['broad01']['aperture2D']
@@ -267,6 +281,7 @@ class Preprocessor:
 
         print("total images:",len(self.images),"Finished!")
         f_backup.close()
+        
         
     def adding_groundtruth(self):
         # read data
