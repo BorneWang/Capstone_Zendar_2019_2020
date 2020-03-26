@@ -52,7 +52,7 @@ class Preprocessor:
         self.new_preprocessing()
         
         # add flag
-        self.aperture_new.attrs.creat('preprocessed', True)
+        self.aperture_new.attrs.create('preprocessed', True)
         
         # copy tracklog
         tracklog1 = self.f['tracklog']
