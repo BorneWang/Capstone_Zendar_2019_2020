@@ -44,8 +44,10 @@ class Kalman_Mapper:
         self.position = deepcopy(gps_pos)
         self.attitude = deepcopy(attitude)
         
-    def add(self, new_data):
-        """ Add a new radar data on the map """
+    def add(self, new_data, fusion=True):
+        """ Add a new radar data on the map 
+            fusion: if false, add raw data to the map
+        """
         if self.last_data is None:
             # use position/attitude custom initialisation
             if not (self.position is None):
@@ -62,11 +64,15 @@ class Kalman_Mapper:
             self.position = deepcopy(self.mapdata.gps_pos)
             self.attitude = deepcopy(self.mapdata.attitude)
         else:
-            self.predict(new_data)
-            self.update(new_data)
+            if fusion:                
+                self.predict(new_data)
+                self.update(new_data)
 
-            self.position = self.process_position(new_data)
-            self.attitude = self.process_attitude(new_data)
+                self.position = self.process_position(new_data)
+                self.attitude = self.process_attitude(new_data)
+            else:
+                self.position = new_data.gps_pos
+                self.attitude = new_data.attitude
 
             self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)
             if self.mapping:
@@ -131,7 +137,7 @@ class Kalman_Mapper_GPSCV2(Kalman_Mapper):
 class Kalman_Mapper_GPSCV2_3D(Kalman_Mapper_GPSCV2):
     """
     Prediction : GPS
-    Measurement : CV2 with 3D correction
+    Measurement : CV2 with 3D correction from GPS
     """   
     def process_position(self, new_data):
         return self.mapdata.gps_pos + self.mapdata.attitude.apply(np.append(self.prev_pos2D + R(-self.prev_att2D).dot(self.trans), self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[2]), True)
@@ -151,7 +157,7 @@ class Kalman_Mapper_GPSCV2_2D(Kalman_Mapper_GPSCV2):
     def process_attitude(self, new_data):
         return rot.from_euler('zxy', [self.prev_att2D + self.rot, 0, 0]).inv()*self.mapdata.attitude
  
-    
+# TODO: if there is a need
 class Kalman_Mapper_CV2GPS(Kalman_Mapper):
     """
     Prediction : CV2

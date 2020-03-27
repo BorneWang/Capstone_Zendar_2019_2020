@@ -13,6 +13,9 @@ from utils import rotation_proj, stat_filter
 class Reader:
     
     def __init__(self, src, t_ini=0, t_final=np.inf):
+        if t_ini>t_final:
+            raise ValueError("Initial timestamp should be smaller than final timestamp")
+            
         self.src = src
         self.heatmaps = dict()
         self.tracklog_translation = np.zeros(3)
@@ -46,54 +49,72 @@ class Reader:
         """ Function load radar data magnitude from HDF5 between t_ini and t_final"""
         hdf5 = h5py.File(self.src,'r+')
         
-        aperture_gt = hdf5['radar']['broad01']
-        aperture = hdf5['radar']['broad01']['aperture2D']
-        times = list(aperture.keys())
-           
-        t0 = float(times[0])       
-        times = [times[i] for i in range(len(times)) if float(times[i])-t0>=t_ini and float(times[i])-t0<t_final]
-        prev_perc = -1
-        for i, t in enumerate(times):
-            if np.floor(i/(len(times)-1)*10) != prev_perc:
-                print("Loading data: "+str(np.floor(i/(len(times)-1)*10)*10)+"%")
-                prev_perc = np.floor(i/(len(times)-1)*10)
-            heatmap = aperture[t][...];       
-            if not np.sum(heatmap) == 0:
-                gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
-                att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-                self.heatmaps[float(t)-float(times[0])] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
-        self.tracklog_translation = aperture.attrs['tracklog_translation']
-            
-        groundtruth = ("groundtruth" in aperture_gt)
-        if groundtruth:
-            print("Loading groundtruth")
-            aperture_gt = hdf5['radar']['broad01']['groundtruth']
-            self.groundtruth_translation = aperture_gt.attrs['tracklog_translation']
-            self.groundtruth = dict()
-            times_gt = list(aperture_gt.keys())
-            times_gt = [times_gt[i] for i in range(len(times_gt)) if (t_ini <= float(times_gt[i])-t0 < t_final) or (i+1<len(times_gt) and t_ini <= float(times_gt[i+1])-t0 < t_final) or (i-1>=0 and t_ini <= float(times_gt[i-1])-t0 < t_final)]
-            gt_att, gt_pos, gt_time = [], [], []
-            for i, t in enumerate(times_gt):
-                gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
-                gt_att.append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
-                gt_time.append(float(t)-float(times[0]))
-            
-            if times_gt[0]> times[0] or times_gt[-1]<times[-1]:
-                for t in times:
-                    if times_gt[0] > t or times_gt[-1] < t:
-                        self.heatmaps.pop(float(t)-float(times[0]))
-            times = list(self.heatmaps.keys())
-            slerp = Slerp(gt_time, rot.from_quat([r.as_quat() for r in gt_att]))
-            gt_att = [rot.from_quat(q) for q in slerp(times).as_quat()]
-            gt_pos = np.array([np.interp(times, gt_time, np.array(gt_pos)[:,i]) for i in range(0,3)]).T
-            for i in range(len(times)):
-                self.groundtruth[times[i]] = {'POSITION': gt_pos[i], 'ATTITUDE': gt_att[i]}
+        try:
+            aperture = hdf5['radar']['broad01']['aperture2D']
+        except:
+            raise Exception("The images should be in radar/broad01/aperture2D directory")
+        assert ('preprocessed' in aperture.attrs) and aperture.attrs['preprocessed'], "The dataset should be preprocessed before use with preprocessor.py"
         
-        hdf5.close()
-        print("Data loaded")
+        try:            
+            times = list(aperture.keys())
+            
+            # Importing radar images from dataset
+            t0 = float(times[0])       
+            times = [times[i] for i in range(len(times)) if float(times[i])-t0>=t_ini and float(times[i])-t0<t_final]
+            prev_perc = -1
+            for i, t in enumerate(times):
+                if np.floor(i/(len(times)-1)*10) != prev_perc:
+                    print("Loading data: "+str(np.floor(i/(len(times)-1)*10)*10)+"%")
+                    prev_perc = np.floor(i/(len(times)-1)*10)
+                heatmap = aperture[t][...];       
+                if not np.sum(heatmap) == 0:
+                    gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
+                    att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
+                    self.heatmaps[float(t)-float(times[0])] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
+            self.tracklog_translation = aperture.attrs['tracklog_translation']
+            
+            # Importing groundtruth GPS information if available
+            aperture_gt = hdf5['radar']['broad01']
+            groundtruth = ("groundtruth" in aperture_gt)
+            if groundtruth:
+                print("Loading groundtruth")
+                aperture_gt = hdf5['radar']['broad01']['groundtruth']
+                self.groundtruth_translation = aperture_gt.attrs['tracklog_translation']
+                self.groundtruth = dict()
+                times_gt = list(aperture_gt.keys())
+                times_gt = [times_gt[i] for i in range(len(times_gt)) if (t_ini <= float(times_gt[i])-t0 < t_final) or (i+1<len(times_gt) and t_ini <= float(times_gt[i+1])-t0 < t_final) or (i-1>=0 and t_ini <= float(times_gt[i-1])-t0 < t_final)]
+                gt_att, gt_pos, gt_time = [], [], []
+                for i, t in enumerate(times_gt):
+                    gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
+                    gt_att.append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
+                    gt_time.append(float(t)-float(times[0]))
+                
+                # Interpolating groundtruth positions to make them match with radar images positions
+                if times_gt[0]> times[0] or times_gt[-1]<times[-1]:
+                    for t in times:
+                        if times_gt[0] > t or times_gt[-1] < t:
+                            self.heatmaps.pop(float(t)-float(times[0]))
+                times = list(self.heatmaps.keys())
+                slerp = Slerp(gt_time, rot.from_quat([r.as_quat() for r in gt_att]))
+                gt_att = [rot.from_quat(q) for q in slerp(times).as_quat()]
+                gt_pos = np.array([np.interp(times, gt_time, np.array(gt_pos)[:,i]) for i in range(0,3)]).T
+                for i in range(len(times)):
+                    self.groundtruth[times[i]] = {'POSITION': gt_pos[i], 'ATTITUDE': gt_att[i]}
+            else:
+                print("No groundtruth data found")
+            
+            hdf5.close()
+            print("Data loaded")
+        except:  
+            hdf5.close()
+            print("A problem occured when importing data")           
         
-    def play_video(self, t_ini=0, t_final=np.inf, grayscale = True):
-        """ Play a video of radar images between t_ini and t_final """
+    def play_video(self, t_ini=0, t_final=np.inf, grayscale = True, save=False):
+        """ Play a video of radar images between t_ini and t_final
+            grayscale: if False automatic coloration of images is used
+            save: if True, save the video as a .mp4
+        """
+        # Handling pause/resume event when clicking on the video
         anim_running = True
         def onClick(event):
             nonlocal anim_running
@@ -105,8 +126,7 @@ class Reader:
                 anim_running = True
                     
         times = self.get_timestamps(t_ini, t_final)
-        images = []
-        
+        images = []       
         fig = plt.figure()
         for t in times:
             plt.axis('off')
@@ -116,10 +136,15 @@ class Reader:
                 images.append([plt.imshow(Image.fromarray(self.heatmaps[t].img)), plt.text(0.6,0.5,str(round(t,2)))])
         fig.canvas.mpl_connect('button_press_event', onClick)
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
+        if save:
+            ani.save(str(self.src) + '.mp4')
         return ani
     
     def plot_evaluation(self, corrected = False, grouped = True):
-        """ Evaluate the transformation given in GPS data information compared to CV2 image analysis """ 
+        """ Evaluate the transformation given in GPS data information compared to CV2 image analysis
+            corrected: if True calculate biases and remove them from displayed error
+            grouped: if True return norm of error instead of error of each component
+        """ 
         times = self.get_timestamps()
         if hasattr(self,"groundtruth"):
             pos_error_gps = np.zeros((len(times)-1,3))
@@ -226,6 +251,7 @@ class Reader:
                 print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
     
     def get_bias(self):
+        """ Calculate the bias in CV2 measurement from comparaison with GPs measurment """
         if self.bias is None:                
             times = self.get_timestamps()       
             t_gps = np.zeros((len(times)-1,2))
@@ -266,7 +292,9 @@ class Reader:
             if t_final is None:
                 t_adj = times[min(range(len(times)), key = lambda i: abs(times[i]-t_ini))]
                 return t_adj
-            else:    
+            else:   
+                if t_ini>t_final:
+                    raise ValueError("Initial timestamp should be smaller than final timestamp")
                 return [t for t in times if t>=t_ini and t<=t_final]
     
     def get_radardata(self, t_ini=None, t_final=None):

@@ -5,7 +5,7 @@ from os import path
 from PIL import Image
 from scipy.spatial.transform import Rotation as rot
  
-from utils import rotation_proj, preprocessor
+from utils import rotation_proj
 
 class RadarData:
     
@@ -65,10 +65,6 @@ class RadarData:
          
             # Restrict to predicted overlap
             self_img, otherdata_img = self.image_overlap(otherdata)
-            
-            # Preprocessing
-            otherdata_img = preprocessor(otherdata_img)
-            self_img = preprocessor(self_img)
            
             # ECC
             warp_mode = cv2.MOTION_EUCLIDEAN
@@ -78,9 +74,6 @@ class RadarData:
             warp_matrix = np.eye(2, 3, dtype=np.float32)
             (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria)
 
-            # SIFT
-            # warp_matrix = cv2.estimateRigidTransform(otherdata_img, self_img, False)
-            
             rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
             translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
             rotation = rot.from_dcm(rot_matrix)
@@ -101,7 +94,6 @@ class RadarData:
         translation, rotation = self.image_transformation_from(otherdata)
         
         gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
-        # TODO: check rotation application
         attitude = rotation.inv()*otherdata.attitude
         return gps_pos, attitude
     
@@ -126,7 +118,7 @@ class RadarData:
 
         return prediction
     
-    def image_overlap(self,data2):
+    def image_overlap(self, data2):
         """ Return only the image intersection """
         w1 = np.ones(np.shape(self.img))
         w2 = np.ones(np.shape(data2.img))

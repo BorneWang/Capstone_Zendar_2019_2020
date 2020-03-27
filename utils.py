@@ -12,13 +12,11 @@ from scipy.spatial.transform import Rotation as rot
 
 def preprocessor(img):
     """ Handle the preprocessor function if defined in main.py """
-    # comment and use radardat_ic if increasing contrast should be used
     return DBSCAN_filter(img, kernel=(9,9), scale=0, binary=False) # use radardata_norm if used
 
 def increase_contrast(img, lin_coeff, threshold, offset):
     """ Increase contrast in the image """
     mask = (img >= threshold)
-    # TODO: discuss what to do below threshold
     img = np.multiply(mask, lin_coeff*img + offset) + np.multiply(np.logical_not(mask), img)
     img[img >= 255] = 255
     return img.astype(np.uint8)

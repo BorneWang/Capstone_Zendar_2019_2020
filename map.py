@@ -12,8 +12,9 @@ from utils import rotation_proj, increase_saturation, merge_img
 class Map():
     
     def __init__(self, name = None):
-        self.chunk_size = 1000
-        self.img_cov = 10
+        self.img_cov = 10 # covariance of each the pixel value in an image
+        
+        self.chunk_size = 1000        
         self.display ={'text': "0 ; 0", 'img': None, 'scale': 1, 'pos': np.array([0,0,0]), 'axes': None, 'fig':None, 'gps_pos':None} 
         
         if name is None:
@@ -21,35 +22,41 @@ class Map():
             self.map_name = 'map_'+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")
             print("Creating map: map_"+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")+'.h5')
             hdf5 = h5py.File('maps/'+self.map_name+'.h5','a')
-            map_hdf5 = hdf5.create_group("map")
-            cov_map_hdf5 = hdf5.create_group("covariance")
-            ini_map = np.nan*np.ones((self.chunk_size, self.chunk_size))
-            ini_cov = np.nan*np.ones((self.chunk_size, self.chunk_size))
-            map_hdf5.create_dataset("0/0", data = ini_map, shape=(self.chunk_size, self.chunk_size) )        
-            cov_map_hdf5.create_dataset("0/0", data = ini_cov, shape=(self.chunk_size, self.chunk_size) ) 
-            self.precision = None
-            self.gps_pos = None
-            self.attitude = None
-            hdf5.close()
+            try:
+                map_hdf5 = hdf5.create_group("map")
+                cov_map_hdf5 = hdf5.create_group("covariance")
+                ini_map = np.nan*np.ones((self.chunk_size, self.chunk_size))
+                ini_cov = np.nan*np.ones((self.chunk_size, self.chunk_size))
+                map_hdf5.create_dataset("0/0", data = ini_map, shape=(self.chunk_size, self.chunk_size) )        
+                cov_map_hdf5.create_dataset("0/0", data = ini_cov, shape=(self.chunk_size, self.chunk_size) ) 
+                self.precision = None
+                self.gps_pos = None
+                self.attitude = None
+            finally:
+                hdf5.close()
         else:     
             # Retrieve an already existing map by name
             self.map_name = name
             hdf5 = h5py.File('maps/'+self.map_name+'.h5','r')
-            map_hdf5 = hdf5["map"]
-            self.precision = map_hdf5.attrs["PRECISION"]
-            self.gps_pos = map_hdf5.attrs["POSITION"]
-            self.attitude = rot.from_quat(map_hdf5.attrs["ATTITUDE"])
-            hdf5.close()
+            try:
+                map_hdf5 = hdf5["map"]
+                self.precision = map_hdf5.attrs["PRECISION"]
+                self.gps_pos = map_hdf5.attrs["POSITION"]
+                self.attitude = rot.from_quat(map_hdf5.attrs["ATTITUDE"])
+            finally:
+                hdf5.close()
 
     def init_map(self, radardata):
         """ Initialize the map with an initial radardata """
         hdf5 = h5py.File('maps/'+self.map_name+'.h5','a')
-        map_hdf5 = hdf5["map"]
-        
-        map_hdf5.attrs["POSITION"] = radardata.gps_pos
-        map_hdf5.attrs["ATTITUDE"] = radardata.attitude.as_quat()
-        map_hdf5.attrs["PRECISION"] = radardata.precision
-        hdf5.close()
+        try:
+            map_hdf5 = hdf5["map"]
+            
+            map_hdf5.attrs["POSITION"] = radardata.gps_pos
+            map_hdf5.attrs["ATTITUDE"] = radardata.attitude.as_quat()
+            map_hdf5.attrs["PRECISION"] = radardata.precision
+        finally:
+            hdf5.close()
         
         self.precision = radardata.precision    
         self.gps_pos = deepcopy(radardata.gps_pos) 
@@ -62,33 +69,35 @@ class Map():
     def build_partial_map(self, otherdata):
         """ Build partial map of the chunks that are needed to contain the new data """
         hdf5 = h5py.File('maps/'+self.map_name+'.h5','a')
-        map_hdf5 = hdf5["map"]
-        cov_map_hdf5 = hdf5["covariance"]
-        
-        q = rotation_proj(self.attitude, otherdata.attitude)
-        P5 = self.attitude.apply(otherdata.gps_pos - self.gps_pos)[0:2]
-        P6 = P5 + q.apply(np.array([otherdata.width(),0,0]))[0:2]
-        P7 = P5 + q.apply(np.array([otherdata.width(),otherdata.height(),0]))[0:2]
-        P8 = P5 + q.apply(np.array([0,otherdata.height(),0]))[0:2]
-        
-        P9 = np.array([min(P5[0],P6[0],P7[0],P8[0]),min(P5[1],P6[1],P7[1],P8[1])])
-        P10 = np.array([max(P5[0],P6[0],P7[0],P8[0]),max(P5[1],P6[1],P7[1],P8[1])])
-        
-        chunk_1 = np.flip(np.floor((P9/self.precision)/self.chunk_size).astype(np.int))
-        chunk_2 = np.flip(np.floor((P10/self.precision)/self.chunk_size).astype(np.int))
-        
-        img = np.nan*np.ones((self.chunk_size*(1+chunk_2[0]-chunk_1[0]), self.chunk_size*(1+chunk_2[1]-chunk_1[1])))
-        cov_img = np.nan*np.ones((self.chunk_size*(1+chunk_2[0]-chunk_1[0]), self.chunk_size*(1+chunk_2[1]-chunk_1[1])))
-        
-        for i in range(chunk_1[0], chunk_2[0]+1):
-            for j in range(chunk_1[1], chunk_2[1]+1):
-                if not str(i)+"/"+str(j) in map_hdf5:
-                    map_hdf5.create_dataset(str(i)+"/"+str(j), data = np.nan*np.ones((self.chunk_size, self.chunk_size)), shape=(self.chunk_size, self.chunk_size) )        
-                    cov_map_hdf5.create_dataset(str(i)+"/"+str(j), data = np.nan*np.ones((self.chunk_size, self.chunk_size)), shape=(self.chunk_size, self.chunk_size) ) 
-                img[(i-chunk_1[0])*self.chunk_size:(i-chunk_1[0]+1)*self.chunk_size, (j-chunk_1[1])*self.chunk_size:(j-chunk_1[1]+1)*self.chunk_size] = map_hdf5[str(i)+"/"+str(j)]
-                cov_img[(i-chunk_1[0])*self.chunk_size:(i-chunk_1[0]+1)*self.chunk_size, (j-chunk_1[1])*self.chunk_size:(j-chunk_1[1]+1)*self.chunk_size] = cov_map_hdf5[str(i)+"/"+str(j)]
-        gps_pos = self.gps_pos + self.attitude.inv().apply(np.array([chunk_1[1]*self.chunk_size*self.precision, chunk_1[0]*self.chunk_size*self.precision, 0]))
-        hdf5.close()
+        try:
+            map_hdf5 = hdf5["map"]
+            cov_map_hdf5 = hdf5["covariance"]
+            
+            q = rotation_proj(self.attitude, otherdata.attitude)
+            P5 = self.attitude.apply(otherdata.gps_pos - self.gps_pos)[0:2]
+            P6 = P5 + q.apply(np.array([otherdata.width(),0,0]))[0:2]
+            P7 = P5 + q.apply(np.array([otherdata.width(),otherdata.height(),0]))[0:2]
+            P8 = P5 + q.apply(np.array([0,otherdata.height(),0]))[0:2]
+            
+            P9 = np.array([min(P5[0],P6[0],P7[0],P8[0]),min(P5[1],P6[1],P7[1],P8[1])])
+            P10 = np.array([max(P5[0],P6[0],P7[0],P8[0]),max(P5[1],P6[1],P7[1],P8[1])])
+            
+            chunk_1 = np.flip(np.floor((P9/self.precision)/self.chunk_size).astype(np.int))
+            chunk_2 = np.flip(np.floor((P10/self.precision)/self.chunk_size).astype(np.int))
+            
+            img = np.nan*np.ones((self.chunk_size*(1+chunk_2[0]-chunk_1[0]), self.chunk_size*(1+chunk_2[1]-chunk_1[1])))
+            cov_img = np.nan*np.ones((self.chunk_size*(1+chunk_2[0]-chunk_1[0]), self.chunk_size*(1+chunk_2[1]-chunk_1[1])))
+            
+            for i in range(chunk_1[0], chunk_2[0]+1):
+                for j in range(chunk_1[1], chunk_2[1]+1):
+                    if not str(i)+"/"+str(j) in map_hdf5:
+                        map_hdf5.create_dataset(str(i)+"/"+str(j), data = np.nan*np.ones((self.chunk_size, self.chunk_size)), shape=(self.chunk_size, self.chunk_size) )        
+                        cov_map_hdf5.create_dataset(str(i)+"/"+str(j), data = np.nan*np.ones((self.chunk_size, self.chunk_size)), shape=(self.chunk_size, self.chunk_size) ) 
+                    img[(i-chunk_1[0])*self.chunk_size:(i-chunk_1[0]+1)*self.chunk_size, (j-chunk_1[1])*self.chunk_size:(j-chunk_1[1]+1)*self.chunk_size] = map_hdf5[str(i)+"/"+str(j)]
+                    cov_img[(i-chunk_1[0])*self.chunk_size:(i-chunk_1[0]+1)*self.chunk_size, (j-chunk_1[1])*self.chunk_size:(j-chunk_1[1]+1)*self.chunk_size] = cov_map_hdf5[str(i)+"/"+str(j)]
+            gps_pos = self.gps_pos + self.attitude.inv().apply(np.array([chunk_1[1]*self.chunk_size*self.precision, chunk_1[0]*self.chunk_size*self.precision, 0]))
+        finally:            
+            hdf5.close()
         return img, cov_img, gps_pos, P9, P10
     
     def update_map(self, img, cov_img, pos):
@@ -104,7 +113,7 @@ class Map():
                 cov_map_hdf5[str(i)+"/"+str(j)][...] = cov_img[(i-chunk[0])*self.chunk_size:(i-chunk[0]+1)*self.chunk_size, (j-chunk[1])*self.chunk_size:(j-chunk[1]+1)*self.chunk_size]
         hdf5.close()
                 
-    def add_data(self,otherdata):
+    def add_data(self, otherdata):
         """ Fusionning a new radardata with part of the map """
         if self.gps_pos is None:
             self.init_map(otherdata)
@@ -128,7 +137,9 @@ class Map():
         return img1, img2, v2
         
     def show(self, gps_pos = None):
-        """ Show a matplotlib representation of the map """
+        """ Show a matplotlib representation of the map 
+            gps_pos: GPS pos where to show the map, origin of the map is used if not specified
+        """
         # Parameter for the map display
         speed_trans = 100
         speed_scroll = 0.1
