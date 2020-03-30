@@ -17,6 +17,24 @@ from utils import DBSCAN_filter
 
 class Preprocessor:
     def __init__(self, src, goal, groundtruth, log = True, loaddata = False, init_load = 0, DBSCAN = True, mean = -1, std = -1):
+        
+        ####################################################################
+        # parameters:
+        # src: source hdf5 file name
+        # goal: the name of the processed file
+        # groundtruth: groundtruth hdf5 file name
+        # log: if use log to process raw data after magnitude stage.
+        # loaddata: load backup data or process from raw data.
+        #           backup data is the data after magnitude stage (from complex
+        #           number to real number)
+        # init_load: this parameter will be used if the program shut dowm when
+        #            processing from scratch, user can use this parameter to load
+        #            backup data and continue run from scratch
+        # DBSCAN: if use DBSCAN_filter to process data
+        # mean: pre set a mean value for normalization stage
+        # std: pre set a std value for normalization stage
+        ####################################################################
+        
         # load files
         self.f = h5py.File(src,'r')
         self.aperture = self.f['radar']['squint_left_facing']['aperture2D']
