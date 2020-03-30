@@ -4,8 +4,23 @@ from copy import deepcopy
 from reader import Reader
 from recorder import Recorder
 from kalman import Kalman_Mapper_GPSCV2_3D, Kalman_Localizer
+import preprocessor
 
 warnings.filterwarnings("ignore") 
+
+# =============================================================================
+# Preprocessing
+# =============================================================================
+# source hdf5 file name
+src = '2019-11-20_1844_001_3VXs.h5'
+# the name of the processed file
+goal = 'radardata2_preprocessed.h5'
+# groundtruth hdf5 file name
+groundtruth = '2019-11-20_1844_001_3VXs_SBG.h5'
+# Init
+hdf5 = preprocessor.Preprocessor(src,goal,groundtruth)
+# Run
+hdf5.RUN()
 
 # =============================================================================
 # Mapping
