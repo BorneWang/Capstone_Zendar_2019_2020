@@ -1,3 +1,4 @@
+import os
 import cv2
 import pyproj
 import pickle
@@ -42,6 +43,7 @@ def increase_saturation(img):
     return im
 
 def figure_save(number, name):
+    os.makedirs(os.path.dirname("Figures/"+str(name)+'.pickle'), exist_ok=True)
     pickle.dump(plt.figure(number), open("Figures/"+str(name)+'.pickle', 'wb'))
 
 def import_figure(name):

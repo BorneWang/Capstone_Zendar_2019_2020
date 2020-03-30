@@ -1,3 +1,4 @@
+import os
 import cv2
 import h5py
 import datetime
@@ -21,6 +22,7 @@ class Map():
             # Create a black map
             self.map_name = 'map_'+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")
             print("Creating map: map_"+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")+'.h5')
+            os.makedirs(os.path.dirname('maps/'+self.map_name+'.h5'), exist_ok=True)
             hdf5 = h5py.File('maps/'+self.map_name+'.h5','a')
             try:
                 map_hdf5 = hdf5.create_group("map")

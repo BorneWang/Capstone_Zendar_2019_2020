@@ -1,10 +1,14 @@
-import cv2
 import pickle
 import numpy as np
 from os import path
 from PIL import Image
+from distutils.version import StrictVersion
 from scipy.spatial.transform import Rotation as rot
  
+import cv2
+if StrictVersion(cv2.__version__) < StrictVersion('4.2.0'):
+    raise ImportError("cv2 version should be 4.2.0 or above")
+
 from utils import rotation_proj
 
 class RadarData:
@@ -72,7 +76,7 @@ class RadarData:
             termination_eps = 1e-9;
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
-            (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria)
+            (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
 
             rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
             translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
