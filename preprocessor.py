@@ -8,7 +8,6 @@ Created on Sun Nov 17 15:28:25 2019
 
 import h5py
 import time
-import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 from scipy.interpolate import interp1d
@@ -16,24 +15,100 @@ from statistics import stdev
 from utils import DBSCAN_filter
 
 class Preprocessor:
-    def __init__(self, src, goal, groundtruth, log = True, loaddata = False, init_load = 0, DBSCAN = True, mean = -1, std = -1):
+    def __init__(self, src, goal, groundtruth, mean = -1, std = -1):
         
         ####################################################################
         # parameters:
         # src: source hdf5 file name
         # goal: the name of the processed file
-        # groundtruth: groundtruth hdf5 file name
-        # log: if use log to process raw data after magnitude stage.
-        # loaddata: load backup data or process from raw data.
-        #           backup data is the data after magnitude stage (from complex
-        #           number to real number)
-        # init_load: this parameter will be used if the program shut dowm when
-        #            processing from scratch, user can use this parameter to load
-        #            backup data and continue run from scratch
-        # DBSCAN: if use DBSCAN_filter to process data
+        # groundtruth: groundtruth hdf5 file name, if there is no groundtruth
+        #              this should be None.
         # mean: pre set a mean value for normalization stage
         # std: pre set a std value for normalization stage
+        #
+        # Introduction:
+        # This Preprocessor is mainly used to process the 2-D complex number
+        # radar matrix data (the format should be hdf5). The output of this
+        # program is a new hdf5 file with the following structure:
+        # file:
+        #   -'radar'
+        #       -'broad01'
+        #           -'aperture2D'
+        #               attrs: 
+        #                   preprocessed = True
+        #                   tracklog_translation = [x, y ,z]
+        #               preprocessed image data (np.array with unint8 dtype)
+        #                   key: Timestamp
+        #                   attrs:
+        #                       POSITION
+        #                       ATTITUDE
+        #                       TIMESTAMP_SPAN
+        #                       APERTURE_SPAN
+        #           -'groundtruth' (if groundtruth is not None)
+        #               attrs:
+        #                   tracklog_translation = [x, y ,z]
+        #               Dataset
+        #                   key: Timestamp
+        #                   data: 0
+        #                   attrs:
+        #                       POSITION
+        #                       ATTITUDE
+        #   -'tracklog'
+        #
+        # Remark:
+        # There are some words in the file structure need to be explained in
+        # detail.
+        #   1. preprocessed image data
+        #   2. tracklog_translation
+        #   3. POSITION
+        #   4. ATTITUDE
+        #   5. groundtruth
+        #
+        # 1. preprocessed image data
+        #   a) calculate the norm of the complex number
+        #   b) do mirror to the matrix and rotate it 90 degree to make sure the
+        #      image is (500,750) shape and on the right of the car.
+        #   c) do np.log on the pixel value of the matrix
+        #   d) Go through all the images and calculate a global mean and std ofutilize
+        #      the dataset
+        #   e) use the global mean and std to normalize the matrix to 0-255
+        #      and change the dtype to uint8
+        #   f) apply Ostu Thresholding algorithm to the imamge and get a
+        #      binary mask.
+        #   g) utilize DBSCAN(Density-Based Spatial Clustering of Applications 
+        #      with Noise) algorithm to do clustering on the mask
+        #   h) apply the mask on the image and get the preprocessed image
+        #
+        # 2. tracklog_translation
+        #   The tracklog_translation is an average translation vector from the
+        #   position in tracklog to the position in aperture2D with the same 
+        #   timestamp.
+        #   
+        # 3. POSITION
+        #   The position in the source file is actually the bottom right of the
+        #   image. We transfer this position to the upper left of the image.
+        #   All the positions here are ECEF position.
+        #
+        # 4. ATTITUDE
+        #   In order to make the attitude suitable for CV2, we did the following
+        #   process:
+        #       a) transfer from (w,x,y,z) to (x,y,z,w)
+        #       b) do inverse
+        #       c) multiply [0,-1,0],[-1,0,0],[0,0,-1]
+        #   The result new attitude is used to directly transfer ECEF position to
+        #   our CV2 coordinate position (x->right, y->down)
+        # 
+        # 5.groundtruth
+        #   The position and attitude are from SBG data. If there is no SBG data
+        #   user can directly set the parameter "groundtruth" to None.
+        #   And the POSITION and ATTITUDE here will be processed the same way above.
         ####################################################################
+        
+        # parameters that could be tuned for new datasets
+        self.GaussianBlur_kernel = (9,9)
+        self.GaussianBlur_scale = 0
+        self.DBSCAN_eps = 5.0
+        self.DBSCAN_min_samples = 30
         
         # load files
         self.f = h5py.File(src,'r')
@@ -48,23 +123,13 @@ class Preprocessor:
         
         # options
         self.goal =goal
-        self.log = log
-        self.loaddata = loaddata
-        self.init_load = init_load
-        self.DBSCAN = DBSCAN
         self.gt = groundtruth
         self.mean = mean
         self.std = std
         
-    def RUN(self):
-        if self.loaddata:
-            self.run_from_loaddata()
-        else:
-            self.run_from_scratch()
-          
-        if not self.log:
-            print("just do magnitude, finished")
-            return
+    def run(self):
+        # do magnitude (from complex to read)
+        self.magnitude_and_save() 
         
         # do global normalization, DBSCAN filtering and copy attrs
         self.new_preprocessing()
@@ -81,16 +146,8 @@ class Preprocessor:
         self.f_new.close()
         
         # add groundtruth to the file
-        self.adding_groundtruth()
-            
-    def run_from_loaddata(self):
-        print("run from loaddata")
-        self.load_backup_data()      
-        
-    def run_from_scratch(self):
-        print("run from scratch")
-        # do magnitude and save bachup files
-        self.magnitude_and_save()      
+        if self.gt is not None:
+            self.adding_groundtruth()
     
     def magnitude_and_save(self):
         # process images in 50-size batch
@@ -98,48 +155,25 @@ class Preprocessor:
         ite = len(self.keys)//batch
         start = 0
         for i in list(np.linspace(batch,ite*batch,ite).astype('int')):
-            # back-up file
-            name = 'backup/'+str(start)+'.h5'
-            f_backup = h5py.File(name,'w')
-            aperture_backup = f_backup.create_group("radar").create_group("broad01").create_group("aperture2D")
             
             # calculate norm, do mirror and rotate 90 degree
             tic = time.time()
             images = list(map(lambda x:self.do_norm_mirror_rotate(self.aperture[x]), self.keys[start:i]))
             for j in range(start,i):
                 idx = j - start
-                if self.log:
-                    self.images.append(np.log(images[idx]))
-                else:
-                    self.images.append(images[idx])
-                
-                # back-up file
-                aperture_backup.create_dataset(self.keys[j],data=images[idx])
+                self.images.append(np.log(images[idx]))
                 
             start = i
             toc = time.time()
             print("batch number:",i,"/",len(self.keys),"time:",toc-tic)
             
-            # close backup file
-            f_backup.close()
-            
         # residual images
-        name = 'backup/'+'rest'+'.h5'
-        f_backup = h5py.File(name,'w')
-        aperture_backup = f_backup.create_group("radar").create_group("broad01").create_group("aperture2D")
         images = list(map(lambda x:self.do_norm_mirror_rotate(self.aperture[x]), self.keys[start:len(self.keys)]))
         for j in range(start,len(self.keys)):
             idx = j - start
-            if self.log:
-                self.images.append(np.log(images[idx]))
-            else:
-                self.images.append(images[idx])
-            
-            # back-up file
-            aperture_backup.create_dataset(self.keys[j],data=images[idx])
+            self.images.append(np.log(images[idx]))
 
         print("total images:",j+1,"Finished!")
-        f_backup.close()
                 
     def new_preprocessing(self):
         # check correct:
@@ -198,7 +232,11 @@ class Preprocessor:
             # DBSCAN filtering
             if self.DBSCAN:
                 if np.nanmax(heatmap) > 0:
-                    heatmap = DBSCAN_filter(heatmap, kernel=(9,9), scale=0, binary=False)
+                    heatmap = DBSCAN_filter(heatmap, kernel=self.GaussianBlur_kernel, 
+                                            scale=self.GaussianBlur_scale, 
+                                            eps=self.DBSCAN_eps,
+                                            min_samples=self.DBSCAN_min_samples, 
+                                            binary=False)
                     print("DBSCAN procedure:", i)
             
             #save
@@ -250,42 +288,7 @@ class Preprocessor:
         return new_image
     
     def calculate_mirror_rotate(self, image):
-        return np.rot90(np.fliplr(image),3)
-    
-    def load_backup_data(self):
-        batch = 50
-        ite = len(self.keys)//batch
-        for i in list(np.linspace(0,(ite-1)*batch,ite).astype('int')):
-            path = 'backup_vn_0217\\' + str(i) + '.h5'
-            print('back up file:', path)
-            f_backup = h5py.File(path,'r')
-            aperture_backup = f_backup['radar']['broad01']['aperture2D']
-            keys_backup = list(aperture_backup.keys())
-            for j in keys_backup:
-                img = aperture_backup[j]
-                if self.log:
-                    self.images.append(np.log(img[...]))
-                else:
-                    self.images.append(img[...])
-
-            f_backup.close()
-        
-        path = 'backup_vn_0217\\' + 'rest' + '.h5'
-        print('back up file:', path)
-        f_backup = h5py.File(path,'r')
-        aperture_backup = f_backup['radar']['broad01']['aperture2D']
-        keys_backup = list(aperture_backup.keys())
-
-        for j in keys_backup:
-            img = aperture_backup[j]
-            if self.log:
-                self.images.append(np.log(img[...]))
-            else:
-                self.images.append(img[...])
-
-        print("total images:",len(self.images),"Finished!")
-        f_backup.close()
-        
+        return np.rot90(np.fliplr(image),3)        
         
     def adding_groundtruth(self):
         # read data
