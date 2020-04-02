@@ -1,109 +1,101 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Nov 17 15:28:25 2019
-
-@author: bowenwang
-"""
-
 import h5py
 import time
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 from scipy.interpolate import interp1d
 from statistics import stdev
-from utils import DBSCAN_filter
+
+from utils import DBSCAN_filter, change_attributes_frame
 
 class Preprocessor:
-    def __init__(self, src, goal, groundtruth, mean = -1, std = -1):
-        
-        ####################################################################
-        # parameters:
-        # src: source hdf5 file name
-        # goal: the name of the processed file
-        # groundtruth: groundtruth hdf5 file name, if there is no groundtruth
-        #              this should be None.
-        # mean: pre set a mean value for normalization stage
-        # std: pre set a std value for normalization stage
-        #
-        # Introduction:
-        # This Preprocessor is mainly used to process the 2-D complex number
-        # radar matrix data (the format should be hdf5). The output of this
-        # program is a new hdf5 file with the following structure:
-        # file:
-        #   -'radar'
-        #       -'broad01'
-        #           -'aperture2D'
-        #               attrs: 
-        #                   preprocessed = True
-        #                   tracklog_translation = [x, y ,z]
-        #               preprocessed image data (np.array with unint8 dtype)
-        #                   key: Timestamp
-        #                   attrs:
-        #                       POSITION
-        #                       ATTITUDE
-        #                       TIMESTAMP_SPAN
-        #                       APERTURE_SPAN
-        #           -'groundtruth' (if groundtruth is not None)
-        #               attrs:
-        #                   tracklog_translation = [x, y ,z]
-        #               Dataset
-        #                   key: Timestamp
-        #                   data: 0
-        #                   attrs:
-        #                       POSITION
-        #                       ATTITUDE
-        #   -'tracklog'
-        #
-        # Remark:
-        # There are some words in the file structure need to be explained in
-        # detail.
-        #   1. preprocessed image data
-        #   2. tracklog_translation
-        #   3. POSITION
-        #   4. ATTITUDE
-        #   5. groundtruth
-        #
-        # 1. preprocessed image data
-        #   a) calculate the norm of the complex number
-        #   b) do mirror to the matrix and rotate it 90 degree to make sure the
-        #      image is (500,750) shape and on the right of the car.
-        #   c) do np.log on the pixel value of the matrix
-        #   d) Go through all the images and calculate a global mean and std ofutilize
-        #      the dataset
-        #   e) use the global mean and std to normalize the matrix to 0-255
-        #      and change the dtype to uint8
-        #   f) apply Ostu Thresholding algorithm to the imamge and get a
-        #      binary mask.
-        #   g) utilize DBSCAN(Density-Based Spatial Clustering of Applications 
-        #      with Noise) algorithm to do clustering on the mask
-        #   h) apply the mask on the image and get the preprocessed image
-        #
-        # 2. tracklog_translation
-        #   The tracklog_translation is an average translation vector from the
-        #   position in tracklog to the position in aperture2D with the same 
-        #   timestamp.
-        #   
-        # 3. POSITION
-        #   The position in the source file is actually the bottom right of the
-        #   image. We transfer this position to the upper left of the image.
-        #   All the positions here are ECEF position.
-        #
-        # 4. ATTITUDE
-        #   In order to make the attitude suitable for CV2, we did the following
-        #   process:
-        #       a) transfer from (w,x,y,z) to (x,y,z,w)
-        #       b) do inverse
-        #       c) multiply [0,-1,0],[-1,0,0],[0,0,-1]
-        #   The result new attitude is used to directly transfer ECEF position to
-        #   our CV2 coordinate position (x->right, y->down)
-        # 
-        # 5.groundtruth
-        #   The position and attitude are from SBG data. If there is no SBG data
-        #   user can directly set the parameter "groundtruth" to None.
-        #   And the POSITION and ATTITUDE here will be processed the same way above.
-        ####################################################################
-        
+    
+    def __init__(self, src, goal, groundtruth, mean = None, std = None):
+        """ Class performing the preprocessing of the dataset
+            parameters:
+            src: source hdf5 file name
+            goal: the name of the processed file
+            groundtruth: groundtruth hdf5 file name, if there is no groundtruth
+                          this should be None.
+            mean: pre set a mean value for normalization stage (optional)
+            std: pre set a std value for normalization stage (optional)
+            
+            Introduction:
+            This Preprocessor is mainly used to process the 2-D complex number
+            radar matrix data (the format should be hdf5). The output of this
+            program is a new hdf5 file with the following structure:
+            file:
+              -'radar'
+                  -'broad01'
+                      -'aperture2D'
+                          attrs: 
+                              preprocessed = True
+                              tracklog_translation = [x, y ,z]
+                          preprocessed image data (np.array with unint8 dtype)
+                              key: Timestamp
+                              attrs:
+                                  POSITION
+                                  ATTITUDE
+                                  TIMESTAMP_SPAN
+                                  APERTURE_SPAN
+                      -'groundtruth' (if groundtruth is not None)
+                          attrs:
+                              tracklog_translation = [x, y ,z]
+                          Dataset
+                              key: Timestamp
+                              data: 0
+                              attrs:
+                                  POSITION
+                                  ATTITUDE
+              -'tracklog'
+            
+            Remark:
+            There are some words in the file structure need to be explained in
+            detail.
+              1. preprocessed image data
+              2. tracklog_translation
+              3. POSITION
+              4. ATTITUDE
+              5. groundtruth
+            
+            1. preprocessed image data
+              a) calculate the norm of the complex number
+              b) do mirror to the matrix and rotate it 90 degree to make sure the
+                  image is (500,750) shape and on the right of the car.
+              c) do np.log on the pixel value of the matrix
+              d) Go through all the images and calculate a global mean and std ofutilize
+                  the dataset
+              e) use the global mean and std to normalize the matrix to 0-255
+                  and change the dtype to uint8
+              f) apply Ostu Thresholding algorithm to the imamge and get a
+                  binary mask.
+              g) utilize DBSCAN(Density-Based Spatial Clustering of Applications 
+                  with Noise) algorithm to do clustering on the mask
+              h) apply the mask on the image and get the preprocessed image
+            
+            2. tracklog_translation
+              The tracklog_translation is an average translation vector from the
+              position in tracklog to the position in aperture2D with the same 
+              timestamp.
+              
+            3. POSITION
+              The position in the source file is actually the bottom right of the
+              image. We transfer this position to the upper left of the image.
+              All the positions here are ECEF position.
+            
+            4. ATTITUDE
+              In order to make the attitude suitable for CV2, we did the following
+              process:
+                  a) transfer from (w,x,y,z) to (x,y,z,w)
+                  b) do inverse
+                  c) multiply [0,-1,0],[-1,0,0],[0,0,-1]
+              The result new attitude is used to directly transfer ECEF position to
+              our CV2 coordinate position (x->right, y->down)
+            
+            5.groundtruth
+              The position and attitude are from SBG data. If there is no SBG data
+              user can directly set the parameter "groundtruth" to None.
+              And the POSITION and ATTITUDE here will be processed the same way above.
+        """        
         # parameters that could be tuned for new datasets
         self.GaussianBlur_kernel = (9,9)
         self.GaussianBlur_scale = 0
@@ -114,49 +106,41 @@ class Preprocessor:
         self.f = h5py.File(src,'r')
         self.aperture = self.f['radar']['squint_left_facing']['aperture2D']
         self.keys = list(self.aperture.keys())
+            
         # create write-in data
         self.f_new = h5py.File(goal,'w')
         self.aperture_new = self.f_new.create_group("radar").create_group("broad01").create_group("aperture2D")
         
-        # set temp images list and temp data
-        self.images = []
+        self.images = []     # set temp images list and temp data
         
         # options
-        self.goal =goal
+        self.goal = goal
         self.gt = groundtruth
         self.mean = mean
         self.std = std
         
     def run(self):
-        # do magnitude (from complex to read)
-        self.magnitude_and_save() 
+        """ Run the preprocessing of the data set """
+        self.magnitude()   # do magnitude (from complex to read)              
+        self.normalization()    # do global normalization, DBSCAN filtering and copy attrs
         
-        # do global normalization, DBSCAN filtering and copy attrs
-        self.new_preprocessing()
-        
-        # add flag
-        self.aperture_new.attrs.create('preprocessed', True)
-        
-        # copy tracklog
-        tracklog1 = self.f['tracklog']
+        self.aperture_new.attrs.create('preprocessed', True)        # add flag
+              
+        tracklog1 = self.f['tracklog']                              # copy tracklog
         self.f_new.create_dataset('tracklog',data=tracklog1[...])
-        # get translation from tracklog to gps
-        self.tracklog_trans(self.goal)
+        self.tracklog_trans(self.goal)                              # get translation from tracklog to gps
         self.f.close()
         self.f_new.close()
         
-        # add groundtruth to the file
         if self.gt is not None:
-            self.adding_groundtruth()
+            self.adding_groundtruth()   # add groundtruth to the file
     
-    def magnitude_and_save(self):
-        # process images in 50-size batch
-        batch = 50
+    def magnitude(self):
+        """ Perform magnitude calculations and mirror rotation of each image """
+        batch = 50                          # process images in 50-size batch
         ite = len(self.keys)//batch
         start = 0
         for i in list(np.linspace(batch,ite*batch,ite).astype('int')):
-            
-            # calculate norm, do mirror and rotate 90 degree
             tic = time.time()
             images = list(map(lambda x:self.do_norm_mirror_rotate(self.aperture[x]), self.keys[start:i]))
             for j in range(start,i):
@@ -174,19 +158,11 @@ class Preprocessor:
             self.images.append(np.log(images[idx]))
 
         print("total images:",j+1,"Finished!")
-                
-    def new_preprocessing(self):
-        # check correct:
-        if len(self.images) == len(self.keys):
-            print("list length correct, continue")
-        else:
-            print("list length error, stop")
-            return
-        
-        # get gloabl mean
-        if self.mean > 0:
+       
+    def get_global_mean(self):
+        """ Calculate the global mean of the dataset or return predefined mean to use """
+        if not self.mean is None:
             global_mean = self.mean
-            print("global mean is:", global_mean)
         else:
             img_count = 1
             sum_ = 0.0
@@ -202,32 +178,49 @@ class Preprocessor:
                 img_count += 1
             global_mean = sum_/count
             print("global mean is:", global_mean)
-        
-        if self.std > 0:
+            self.mean = global_mean
+        return global_mean
+       
+    def get_global_std(self):
+        """ Calculate the global std of the dataset or return predefined std to use """
+        if not self.std is None:
             global_std = self.std
-            print("global_std is:", global_std)
         else:
-            # get std
             img_count = 1
             sum_ = 0.0
+            count = 0
             for img in self.images:
                 row, col = img.shape
                 for i in range(row):
                     for j in range(col):
                         if img[i][j] > 0:
-                            sum_ += (img[i][j]-global_mean)**2
+                            sum_ += (img[i][j]-self.get_global_mean())**2
+                            count += 1
                 print("img count:", img_count)
                 img_count += 1
             global_std = (sum_/count)**(0.5)
+            self.std = global_std
             print("global_std is:", global_std)
+        return global_std
+        
+    def normalization(self):
+        """ Perform a global shifted normalization of the dataset """
+        # check correct:
+        if len(self.images) == len(self.keys):
+            print("list length correct, continue")
+        else:
+            print("list length error, stop")
+            return
+        
+        global_mean = self.get_global_mean()    # get global mean
+        global_std = self.get_global_std()      # get global std       
         
         for i in range(len(self.keys)):
             heatmap = self.images[i]
             heatmap = ((heatmap-global_mean)/global_std)*255.0/4.0
             heatmap[heatmap < 0] = 0
             heatmap[heatmap > 255] = 255
-            heatmap = heatmap.astype(np.uint8)
-            
+            heatmap = heatmap.astype(np.uint8)           
             
             # DBSCAN filtering
             if self.DBSCAN:
@@ -238,95 +231,67 @@ class Preprocessor:
                                             min_samples=self.DBSCAN_min_samples, 
                                             binary=False)
                     print("DBSCAN procedure:", i)
-            
-            #save
-            self.image_new = self.aperture_new.create_dataset(self.keys[i],data=heatmap)
-            # add attrs
-            self.adding_attrs(i)
-    
-            
+                        
+            self.image_new = self.aperture_new.create_dataset(self.keys[i],data=heatmap) #save
+            self.adding_attrs(i)                                                         # add attrs
+              
     def tracklog_trans(self, goal):
+        """ Add the tracklog translation attribute to the new dataset """
         tklog = Tracklog(goal)
         self.aperture_new.attrs.create('tracklog_translation',tklog.translations_POV_mean)
         
-        
     def adding_attrs(self, idx):
-        old_image = self.aperture[self.keys[idx]]
-        r0 = Rot.from_quat(list((old_image.attrs['ATTITUDE'][0][1],
-                                     old_image.attrs['ATTITUDE'][0][2],
-                                     old_image.attrs['ATTITUDE'][0][3],
-                                     old_image.attrs['ATTITUDE'][0][0]))) # From POV(up, left) to ECEF
-        r0_inv = r0.inv() # from ECEF to POV(up,left)
-        r1 = Rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]]) #from POV to CV2 Coordinate(right,down)
-        r2 = r1*r0_inv #from ECEF to CV2, new ATTITUDE!
-        new_quat = r2.as_quat() # new ATTITUDE to be saved!
-        # position
-        p_bottomright_global = list(old_image.attrs['POSITION'][0]) #bottom right in ECEF
-        p_topleft_global = p_bottomright_global + r0.apply([20,30,0]) #topleft in ECEF, new POSITION!
-        # Or p_topleft_global = p_bottomleft_global + r2.inv().apply([-30,-20,0])
+        """ Add attributes to the image idx (POSITION, ATTITUDE, TIMESTAMP_SPAN, APERTURE_SPAN) """
+        old_image = self.aperture[self.keys[idx]]        
+        new_quat, p_topleft_global = change_attributes_frame(old_image)     # processing position and attitude
+
         # save to h5
         self.image_new.attrs.create('ATTITUDE', np.array([(new_quat[0], new_quat[1],
                                               new_quat[2], new_quat[3])],dtype = [('x', '<f8'), ('y', '<f8'), ('z', '<f8'), ('w', '<f8')]))
         self.image_new.attrs.create('POSITION', np.array([(p_topleft_global[0],p_topleft_global[1],
                                                   p_topleft_global[2])],dtype = [('x', '<f8'), ('y', '<f8'), ('z', '<f8')]))
-    
-    
+        
         # copy other attrs
         self.image_new.attrs.create('TIMESTAMP_SPAN',old_image.attrs['TIMESTAMP_SPAN'])
         self.image_new.attrs.create('APERTURE_SPAN',old_image.attrs['APERTURE_SPAN'])
         
-    def do_norm_mirror_rotate(self,image):
-        return self.calculate_mirror_rotate(self.calculate_norm(image))
-        
     def calculate_norm(self, image):
+        """ Calculate magnitude of given image """
         row, col = image.shape
         new_image = np.zeros((row,col))
         for i in range(row):
-            new_image[i,:] = list(map(lambda x: np.linalg.norm((x['real'],x['imag'])), 
-                                  image[i,:]))
-            
+            new_image[i,:] = list(map(lambda x: np.linalg.norm((x['real'],x['imag'])), image[i,:]))            
         return new_image
     
     def calculate_mirror_rotate(self, image):
+        """ Rotate and mirror the image """
         return np.rot90(np.fliplr(image),3)        
         
+    def do_norm_mirror_rotate(self,image):
+        return self.calculate_mirror_rotate(self.calculate_norm(image))
+    
     def adding_groundtruth(self):
         # read data
         f1 = h5py.File(self.goal,'r+')
         f2 = h5py.File(self.gt,'r')        
 
         aperture2 = f2['radar']['squint_left_facing']['aperture2D']
+        keys = list(aperture2.keys())
 
         broad1 = f1['radar']['broad01']
         groundtruth = broad1.create_group('groundtruth')
-
-        keys = list(aperture2.keys())
-
-        # copy and precessing position and attitude
 
         for key in keys:
             img = aperture2[key]
             img_new = groundtruth.create_dataset(key,data=0)
             
+            new_quat, p_topleft_global = change_attributes_frame(img)   # processing position and attitude
             
-            r0 = Rot.from_quat(list((img.attrs['ATTITUDE'][0][1],
-                                     img.attrs['ATTITUDE'][0][2],
-                                     img.attrs['ATTITUDE'][0][3],
-                                     img.attrs['ATTITUDE'][0][0]))) # From POV(up, left) to ECEF
-            r0_inv = r0.inv() # from ECEF to POV(up,left)
-            r1 = Rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]]) #from POV to CV2 Coordinate(right,down)
-            r2 = r1*r0_inv #from ECEF to CV2, new ATTITUDE!
-            new_quat = r2.as_quat() # new ATTITUDE to be saved!
-            # position
-            p_bottomright_global = list(img.attrs['POSITION'][0]) #bottom right in ECEF
-            p_topleft_global = p_bottomright_global + r0.apply([20,30,0]) #topleft in ECEF, new POSITION!
-            # Or p_topleft_global = p_bottomleft_global + r2.inv().apply([-30,-20,0])
             # save to h5
             img_new.attrs.create('ATTITUDE', np.array([(new_quat[0], new_quat[1],
                                                         new_quat[2], new_quat[3])],dtype = [('x', '<f8'), ('y', '<f8'), ('z', '<f8'), ('w', '<f8')]))
             img_new.attrs.create('POSITION', np.array([(p_topleft_global[0],p_topleft_global[1],
                                                         p_topleft_global[2])],dtype = [('x', '<f8'), ('y', '<f8'), ('z', '<f8')]))
-
         f1.close()
         f2.close()
         
@@ -335,7 +300,6 @@ class Preprocessor:
         groundtruth = f1['radar']['broad01']['groundtruth']
         groundtruth.attrs.create('tracklog_translation',tklog.translations_POV_mean)
         f1.close()
-    
     
 class Tracklog:
     
@@ -352,18 +316,17 @@ class Tracklog:
         self.value = value
         
         tic = time.time()
-        self.loaddata(src)
+        self.load_data(src)
         self.get_translations(src)
         print("time consume:", time.time()-tic)
         
-    def loaddata(self, src):
-        # load h5 file
-        hdf5 = h5py.File(src,'r')
-        # radar image data
-        aperture = hdf5['radar']['broad01'][self.foldername]
+    def load_data(self, src):
+        hdf5 = h5py.File(src,'r')                               # load h5 file
+        aperture = hdf5['radar']['broad01'][self.foldername]    # radar image data
         times = list(aperture.keys())
         N_img = len(times)
         print("radar images :", N_img)
+        
         # tracklog data
         if self.tracklog:
             f_gt = h5py.File(self.value, 'r')
@@ -382,18 +345,16 @@ class Tracklog:
         hdf5.close()
         
     def get_translations(self, src):
-        #load file
-        hdf5 = h5py.File(src,'r')
-        # radar image data
-        aperture = hdf5['radar']['broad01'][self.foldername]
+        hdf5 = h5py.File(src,'r')                                #load file
+        aperture = hdf5['radar']['broad01'][self.foldername]     # radar image data
         times = list(aperture.keys())
         N_img = len(times)
-        # define list
+
         trans_list = []
         POV_x_list = []
         POV_y_list = []
         POV_z_list = []
-        # loop
+
         for key in range(N_img):
             try:
                 car_pos_x = self.position_x(float(times[key]))
@@ -424,7 +385,5 @@ class Tracklog:
         self.translations_POV_stdev = (stdev(POV_x_list),
                                        stdev(POV_y_list),
                                        stdev(POV_z_list))
-        
-            
         hdf5.close()
         

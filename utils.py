@@ -11,6 +11,23 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
 from scipy.spatial.transform import Rotation as rot
 
+def change_attributes_frame(img):
+    """ Change attributes to CV2 (right-back-down) frame and position in top left corner """
+    # Attitude conversion
+    r0 = rot.from_quat(list((img.attrs['ATTITUDE'][0][1],
+                                 img.attrs['ATTITUDE'][0][2],
+                                 img.attrs['ATTITUDE'][0][3],
+                                 img.attrs['ATTITUDE'][0][0]))) # From POV(up, left) to ECEF
+    r0_inv = r0.inv()                               # from ECEF to POV(up,left)
+    r1 = rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]]) # from POV to CV2 Coordinate(right,down)
+    r2 = r1*r0_inv                                  # from ECEF to CV2, new ATTITUDE!
+    new_quat = r2.as_quat()                         # new ATTITUDE to be saved!
+    
+    # Position conversion
+    p_bottomright_global = list(img.attrs['POSITION'][0])     #bottom right in ECEF
+    p_topleft_global = p_bottomright_global + r0.apply([20,30,0])   #topleft in ECEF, new POSITION!
+    return new_quat, p_topleft_global
+
 def preprocessor(img):
     """ Handle the preprocessor function if defined in main.py """
     return DBSCAN_filter(img, kernel=(9,9), scale=0, binary=False)
