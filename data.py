@@ -16,9 +16,9 @@ class RadarData:
     def __init__(self, ts, img, gps_pos, attitude, precision=0.04):
         self.id = ts
         self.precision = precision
-        self.img = img # array image (0-255)
-        self.gps_pos = gps_pos # 1x3 array
-        self.attitude = attitude # scipy quaternion
+        self.img = img              # array image (0-255)
+        self.gps_pos = gps_pos      # 1x3 array
+        self.attitude = attitude    # scipy quaternion
         
     def get_img(self):
         """ Return an image of the map (unknown area are set to zero) """ 
@@ -65,24 +65,37 @@ class RadarData:
         if str(self.id)+"-"+str(otherdata.id) in trans_dict:
             translation, rotation = trans_dict[str(self.id)+"-"+str(otherdata.id)]
         else:
-            print("Calculating transformation")
+            print("Calculating transformation: "+ str(self.id)+"-"+str(otherdata.id))
          
-            # Restrict to predicted overlap
-            self_img, otherdata_img = self.image_overlap(otherdata)
-           
-            # ECC
-            warp_mode = cv2.MOTION_EUCLIDEAN
-            number_of_iterations = 625;
-            termination_eps = 1e-9;
-            criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-            warp_matrix = np.eye(2, 3, dtype=np.float32)
-            (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
-
-            rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
-            translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
-            rotation = rot.from_dcm(rot_matrix)
+            try:
+                # Restrict to predicted overlap
+                self_img, otherdata_img = self.image_overlap(otherdata)
+                
+                # ECC
+                warp_mode = cv2.MOTION_EUCLIDEAN
+                number_of_iterations = 500;
+                termination_eps = 1e-9;
+                criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
+                warp_matrix = np.eye(2, 3, dtype=np.float32)
+                (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
+    
+                rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
+                translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
+                rotation = rot.from_dcm(rot_matrix)
+            except:
+                try:
+                    # Without restrictind to image overlap
+                    (cc, warp_matrix) = cv2.findTransformECC (otherdata.img, self.img, warp_matrix, warp_mode, criteria, None, 1)
+    
+                    rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
+                    translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
+                    rotation = rot.from_dcm(rot_matrix)
+                except:    
+                    print("CV2 calculation failed")
+                    translation = np.nan
+                    rotation = np.nan
             
-            if not (otherdata.id == -1 or self.id == -1):      
+            if not (otherdata.id == -1 or self.id == -1) and not np.isnan(translation):      
                 cv2_transformations = open("cv2_transformations.pickle","wb")
                 trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
                 pickle.dump(trans_dict, cv2_transformations)
@@ -97,8 +110,13 @@ class RadarData:
         """ Return the actual position and attitude based on radar images comparison """
         translation, rotation = self.image_transformation_from(otherdata)
         
-        gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
-        attitude = rotation.inv()*otherdata.attitude
+        if not np.isnan(translation):     
+            gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
+            attitude = rotation.inv()*otherdata.attitude
+        else:
+            print("No cv2 measurement, use GPS instead")
+            gps_pos = self.gps_pos
+            attitude = self.attitude
         return gps_pos, attitude
     
     def predict_image(self, gps_pos, attitude):

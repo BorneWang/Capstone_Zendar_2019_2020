@@ -1,16 +1,18 @@
+import os
 import h5py
 import numpy as np
 from PIL import Image
 from copy import deepcopy
 from data import RadarData
 import matplotlib.pyplot as plt
+from recorder import Plot_Handler
 import matplotlib.animation as animation
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as rot
 
 from utils import rotation_proj, stat_filter
 
-class Reader:
+class Reader(Plot_Handler):
     
     def __init__(self, src, t_ini=0, t_final=np.inf):
         if t_ini>t_final:
@@ -53,8 +55,10 @@ class Reader:
             aperture = hdf5['radar']['broad01']['aperture2D']
         except:
             raise Exception("The images should be in radar/broad01/aperture2D directory")
-        assert ('preprocessed' in aperture.attrs) and aperture.attrs['preprocessed'], "The dataset should be preprocessed before use with preprocessor.py"
-        
+        if not(('preprocessed' in aperture.attrs) and aperture.attrs['preprocessed']):
+            hdf5.close()
+            raise Exception("The dataset should be preprocessed before with Preprocessor")
+            
         try:            
             times = list(aperture.keys())
             
@@ -107,7 +111,7 @@ class Reader:
             print("Data loaded")
         except:  
             hdf5.close()
-            print("A problem occured when importing data")           
+            raise Exception("A problem occured when importing data")           
         
     def play_video(self, t_ini=0, t_final=np.inf, grayscale = True, save=False):
         """ Play a video of radar images between t_ini and t_final
@@ -137,7 +141,8 @@ class Reader:
         fig.canvas.mpl_connect('button_press_event', onClick)
         ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         if save:
-            ani.save(str(self.src) + '.mp4')
+            os.makedirs(os.path.dirname('Videos/' + str(self.src) + '.mp4'), exist_ok=True)
+            ani.save('Videos/' + str(self.src) + '.mp4')
         return ani
     
     def plot_evaluation(self, corrected = False, grouped = True):
@@ -251,7 +256,7 @@ class Reader:
                 print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
     
     def get_bias(self):
-        """ Calculate the bias in CV2 measurement from comparaison with GPs measurment """
+        """ Calculate the bias in CV2 measurement from comparaison with GPS measurements """
         if self.bias is None:                
             times = self.get_timestamps()       
             t_gps = np.zeros((len(times)-1,2))
@@ -383,4 +388,19 @@ class Reader:
                 for i in range(len(times)-1):
                     out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
                 return out
- 
+            
+    def plot_trajectory(self, arrow=False):
+        """ Redefine Plot_Handler plot_trajectory function to plot only GPS trajectories """
+        super().plot_trajectory(arrow, True, False)
+        
+    def export_map(self):
+        """ Redefine Plot_Handler export_map function to plot only GPS trajectories """
+        super().export_map(True, False)
+        
+    def plot_altitude(self):
+        """ Redefine Plot_Handler plot_altitude function to plot only GPS trajectories """
+        super().plot_altitude(True, False)
+    
+    def plot_attitude(self):
+        """ Redefine Plot_Handler plot_attitude function to plot only GPS trajectories """
+        super().plot_attitude(True, False)
