@@ -50,7 +50,7 @@ recorder = Recorder(reader, kalman)         # Creating recorder
 for ts, radardata in reader:
     data = deepcopy(radardata)
     if use_groundtruth:
-        data.gps_pos = reader.get_groundtruth_pos(ts) + reader.get_groundtruth_att(ts).apply(reader.tracklog_translation - reader.groundtruth_translation, True) + reader.get_groundtruth_att(ts).apply([30, 10, 0], True)
+        data.gps_pos = reader.get_groundtruth_pos(ts) + reader.get_groundtruth_att(ts).apply(reader.tracklog_translation - reader.groundtruth_translation, True)
         data.attitude = reader.get_groundtruth_att(ts)
                
     pos, att = kalman.add(data, use_fusion) # add a new image to the map
