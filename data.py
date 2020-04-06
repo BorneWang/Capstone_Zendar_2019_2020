@@ -95,7 +95,7 @@ class RadarData:
                     translation = np.nan
                     rotation = np.nan
             
-            if not (otherdata.id == -1 or self.id == -1) and not np.isnan(translation):      
+            if not (otherdata.id == -1 or self.id == -1) and not np.any(np.isnan(translation)):      
                 cv2_transformations = open("cv2_transformations.pickle","wb")
                 trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
                 pickle.dump(trans_dict, cv2_transformations)
@@ -110,7 +110,7 @@ class RadarData:
         """ Return the actual position and attitude based on radar images comparison """
         translation, rotation = self.image_transformation_from(otherdata)
         
-        if not np.isnan(translation):     
+        if not np.any(np.isnan(translation)):     
             gps_pos = otherdata.gps_pos + otherdata.earth2rbd(translation,True)
             attitude = rotation.inv()*otherdata.attitude
         else:
