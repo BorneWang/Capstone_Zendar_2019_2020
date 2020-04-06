@@ -4,7 +4,7 @@ import scipy.stats as stat
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, ecef2enu, ecef2lla, rbd_translate
+from utils import rotation_proj, ecef2enu, ecef2lla, rbd_translate, stat_filter
 
 class Plot_Handler:
     
@@ -204,32 +204,49 @@ class Recorder(Plot_Handler):
             else:
                 plt.plot(list(self.kalman_record.keys())[1:], [kalman['INNOVATION'][0].dot(np.linalg.inv(kalman['INNOVATION'][1])).dot(kalman['INNOVATION'][0])/stat.chi2.ppf(p, df=len(kalman['INNOVATION'][0])) for kalman in list(self.kalman_record.values())[1:]])
         
-    def plot_kalman_evaluation(self, use_groundtruth = True):
+    def plot_kalman_evaluation(self, use_groundtruth = True, grouped=True):
+        """ Return a plot of the error of the Kalman in filter in the first image frame 
+            use_groundtruth: if False compare Kalman filter performance with radar images GPS
+            grouped: if True return norm of error instead of error of each component
+        """
+        error_pos, error_att = self.get_kalman_error(use_groundtruth = True)
+        
+        plt.figure()
+        plt.xlabel("Time (s)")
+        plt.ylabel("Error (m)")
+        plt.title("Error in position of the Kalman filter in first image frame")
+        if grouped:
+            plt.plot(self.reader.get_timestamps(), np.linalg.norm(error_pos))
+            print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos, axis=1), axis=0), 5))+ ")")
+        else:
+            plt.plot(self.reader.get_timestamps(), error_pos)
+            plt.legend(["Right", "Backward", "Down"])
+            print("Average position error (m): " + str(np.round(np.mean(stat_filter(error_pos, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(stat_filter(error_pos, 0.9), axis=0), 5))+ ")")
+       
+        plt.figure()
+        plt.xlabel("Time (s)")
+        plt.ylabel("Error (rad)")
+        plt.title("Error in attitude of the Kalman filter in first image frame")
+        if grouped:
+            plt.plot(self.reader.get_timestamps(), abs(error_att))
+            print("Average rotation error (rad): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(error_att, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(error_att))), 5))+ ")")
+        else:
+            plt.plot(self.reader.get_timestamps(), error_att)
+            print("Average rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(error_att, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(error_att)), 5))+ ")")
+        return error_pos, error_att
+     
+    def get_kalman_error(self, use_groundtruth = True):
         """ Return error of the Kalman in filter in the first image frame 
             use_groundtruth: if False compare Kalman filter performance with radar images GPS
         """
         if hasattr(self.reader,"groundtruth") and use_groundtruth:
             error_pos = np.array([self.reader.get_radardata(0).earth2rbd(self.kalman_record[ts]['POSITION']-self.reader.get_groundtruth_pos(ts)) for ts in list(self.kalman_record.keys())])
-        else:    
-            error_pos = np.array([self.reader.get_radardata(0).earth2rbd(self.kalman_record[ts]['POSITION']-self.reader.get_gps_pos(ts)) for ts in list(self.kalman_record.keys())])
-            plt.figure()
-            plt.plot(self.reader.get_timestamps(), error_pos)
-            plt.legend(["Right", "Backward", "Down"])
-            plt.xlabel("Time (s)")
-            plt.ylabel("Error (m)")
-            plt.title("Error in position of the Kalman filter in first image frame")
-        
-        if hasattr(self.reader,"groundtruth") and use_groundtruth:
             error_att = np.array([rotation_proj(self.reader.get_groundtruth_att(ts), self.kalman_record[ts]['ATTITUDE']).as_euler('zxy')[0] for ts in list(self.kalman_record.keys())])
         else:    
+            error_pos = np.array([self.reader.get_radardata(0).earth2rbd(self.kalman_record[ts]['POSITION']-self.reader.get_gps_pos(ts)) for ts in list(self.kalman_record.keys())])  
             error_att = np.array([rotation_proj(self.reader.get_gps_att(ts), self.kalman_record[ts]['ATTITUDE']).as_euler('zxy')[0] for ts in list(self.kalman_record.keys())])
-            plt.figure()
-            plt.plot(self.reader.get_timestamps(), error_att)
-            plt.xlabel("Time (s)")
-            plt.ylabel("Error (rad)")
-            plt.title("Error in attitude of the Kalman filter in first image frame")
         return error_pos, error_att
-        
+    
     def get_positions(self):
         """ Return positions after fusion """
         return np.array([kalman['POSITION'] for kalman in self.kalman_record.values()])  
