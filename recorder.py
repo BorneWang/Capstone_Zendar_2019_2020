@@ -1,4 +1,6 @@
 import gmplot
+import pickle
+import datetime
 import numpy as np
 import scipy.stats as stat
 import matplotlib.pyplot as plt
@@ -90,7 +92,7 @@ class Plot_Handler:
         if cv2_corrected and not gps_only:
             self.add_trajectory_line(pos0, att0, self.get_measured_positions(cv2_corrected), self.get_measured_attitudes(cv2_corrected), "CV2 corrected", 'r--', arrow)
 
-        if not gps_only and len(self.get_positions())!=0:
+        if len(self.get_positions())!=0:
             self.add_trajectory_line(pos0, att0, self.get_positions(), self.get_attitudes(), "Output", 'cornflowerblue', arrow)
 
         plt.xlabel('x (meters)')
@@ -132,7 +134,7 @@ class Plot_Handler:
             trajectory = att0.apply(pos - pos[0])        
             plt.plot(reader.get_timestamps(), trajectory[:,2], 'r--', label="CV2 corrected", picker=True)
       
-        if not gps_only and len(self.get_positions())!=0:
+        if len(self.get_positions())!=0:
             pos = rbd_translate(self.get_positions(), self.get_attitudes(), reader.tracklog_translation)
             trajectory = att0.apply(pos - pos[0])        
             plt.plot(reader.get_timestamps(), trajectory[:,2], 'cornflowerblue', label="Output", picker=True)
@@ -189,6 +191,18 @@ class Recorder(Plot_Handler):
     def record(self, ts):
         """ Record value in a kalmans dictionary for later use """
         self.kalman_record[ts] = {'ATTITUDE': self.kalman.attitude, 'POSITION': self.kalman.position, 'INNOVATION': self.kalman.innovation}
+        
+    def save(self):
+        """ Save values recorded by the recorder """
+        record = open("recorder_"+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")+".pickle","wb")
+        pickle.dump(self.kalman_record, record)
+        record.close()
+        
+    def add_record(self, name):
+        """ Import recorded values from pickle """ 
+        record = open(name+".pickle","rb")
+        self.kalman_record = pickle.load(record)
+        record.close()
             
     def plot_innovation(self, individual=False, p=0.99):
         """ Return innovation made by cv2 measurement during fusion """
@@ -216,7 +230,7 @@ class Recorder(Plot_Handler):
         plt.ylabel("Error (m)")
         plt.title("Error in position of the Kalman filter in first image frame")
         if grouped:
-            plt.plot(self.reader.get_timestamps(), np.linalg.norm(error_pos))
+            plt.plot(self.reader.get_timestamps(), np.linalg.norm(error_pos,  axis=1))
             print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos, axis=1), axis=0), 5))+ ")")
         else:
             plt.plot(self.reader.get_timestamps(), error_pos)
@@ -233,7 +247,6 @@ class Recorder(Plot_Handler):
         else:
             plt.plot(self.reader.get_timestamps(), error_att)
             print("Average rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(error_att, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(error_att)), 5))+ ")")
-        return error_pos, error_att
      
     def get_kalman_error(self, use_groundtruth = True):
         """ Return error of the Kalman in filter in the first image frame 
