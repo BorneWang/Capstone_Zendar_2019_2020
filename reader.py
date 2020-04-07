@@ -74,7 +74,7 @@ class Reader(Plot_Handler):
                 if not np.sum(heatmap) == 0:
                     gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
                     att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
-                    self.heatmaps[float(t)-float(times[0])] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
+                    self.heatmaps[float(t)-t0] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
             self.tracklog_translation = aperture.attrs['tracklog_translation']
             
             # Importing groundtruth GPS information if available
@@ -91,13 +91,13 @@ class Reader(Plot_Handler):
                 for i, t in enumerate(times_gt):
                     gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
                     gt_att.append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
-                    gt_time.append(float(t)-float(times[0]))
+                    gt_time.append(float(t)-t0)
                 
                 # Interpolating groundtruth positions to make them match with radar images positions
                 if times_gt[0]> times[0] or times_gt[-1]<times[-1]:
                     for t in times:
                         if times_gt[0] > t or times_gt[-1] < t:
-                            self.heatmaps.pop(float(t)-float(times[0]))
+                            self.heatmaps.pop(float(t)-t0)
                 times = list(self.heatmaps.keys())
                 slerp = Slerp(gt_time, rot.from_quat([r.as_quat() for r in gt_att]))
                 gt_att = [rot.from_quat(q) for q in slerp(times).as_quat()]
@@ -150,7 +150,7 @@ class Reader(Plot_Handler):
             corrected: if True calculate biases and remove them from displayed error
             grouped: if True return norm of error instead of error of each component
         """ 
-        times = self.get_timestamps()
+        times = self.get_timestamps(0, np.inf)
         if hasattr(self,"groundtruth"):
             pos_error_gps = np.zeros((len(times)-1,3))
             pos_error_cv2 = np.zeros((len(times)-1,3))
@@ -217,23 +217,23 @@ class Reader(Plot_Handler):
         if grouped:            
             if hasattr(self,"groundtruth"):
                 plt.title("Squared error of GPS and CV2 rotations with groundtruth")
-                plt.plot(times[1:], abs(att_error_gps), label="GPS")
-                plt.plot(times[1:], abs(att_error_cv2), label="CV2")
+                plt.plot(times[1:], abs(np.rad2deg(att_error_gps)), label="GPS")
+                plt.plot(times[1:], abs(np.rad2deg(att_error_cv2)), label="CV2")
                 plt.legend()
             else:
                 plt.title("Squared error between GPS and CV2 rotations")
-                plt.plot(times[1:], abs(att_error))
+                plt.plot(times[1:], abs(np.rad2deg(att_error)))
         else:           
             if hasattr(self,"groundtruth"):
                 plt.title("Error of GPS and CV2 rotations with groundtruth")
-                plt.plot(times[1:], att_error_gps, label="GPS")
-                plt.plot(times[1:], att_error_cv2, label="CV2")
+                plt.plot(times[1:], np.rad2deg(att_error_gps), label="GPS")
+                plt.plot(times[1:], np.rad2deg(att_error_cv2), label="CV2")
                 plt.legend()
             else:
                 plt.title("Error between GPS and CV2 rotations") 
-                plt.plot(times[1:], att_error)
+                plt.plot(times[1:], np.rad2deg(att_error))
         plt.xlabel("Time (s)")
-        plt.ylabel("Error (rad)")
+        plt.ylabel("Error (deg)")
         
         if grouped:
             if hasattr(self,"groundtruth"):
@@ -243,7 +243,7 @@ class Reader(Plot_Handler):
                 print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error_cv2, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error_cv2))), 5))+ ")")
             else:
                 print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error, 0.9), axis=1), axis=0),5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error, axis=1), axis=0), 5))+ ")")
-                print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error))), 5))+ ")")
+                print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error))), 5))+ ")")
 
         else:
             if hasattr(self,"groundtruth"):
@@ -253,12 +253,12 @@ class Reader(Plot_Handler):
                 print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error_cv2, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error_cv2)), 5))+ ")")
             else:
                 print("Average cv2 translation error (m): " + str(np.round(np.mean(stat_filter(pos_error, 0.9), axis=0),5)) + " (" +str(np.round(np.std(pos_error), 5), axis=0)+ ")")
-                print("Average cv2 rotation error (rad): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
+                print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(att_error, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(att_error)), 5))+ ")")
     
     def get_bias(self):
         """ Calculate the bias in CV2 measurement from comparaison with GPS measurements """
         if self.bias is None:                
-            times = self.get_timestamps()       
+            times = self.get_timestamps(0, np.inf)       
             t_gps = np.zeros((len(times)-1,2))
             t_cv2 = np.zeros((len(times)-1,2))
             r_gps = np.zeros(len(times)-1)
@@ -285,8 +285,7 @@ class Reader(Plot_Handler):
             bias_rot = np.mean(stat_filter(r_gps-r_cv2, 0.9), axis=0)
             self.bias = (bias_trans, rot.from_dcm(np.array([[np.cos(bias_rot), -np.sin(bias_rot), 0], [np.sin(bias_rot), np.cos(bias_rot), 0], [0,0,1]])))
         return self.bias
-    
-         
+           
     def get_timestamps(self, t_ini=None, t_final=None):
         """ Return a list of data timestamps between t_ini and t_final """
         times = list(self.heatmaps.keys())
@@ -295,6 +294,8 @@ class Reader(Plot_Handler):
         else:
             times.sort()
             if t_final is None:
+                if t_ini==np.inf:
+                    return times[-1]
                 t_adj = times[min(range(len(times)), key = lambda i: abs(times[i]-t_ini))]
                 return t_adj
             else:   
@@ -304,15 +305,11 @@ class Reader(Plot_Handler):
     
     def get_radardata(self, t_ini=None, t_final=None):
         """ Return radar data for time between t_ini and t_final """
-        if t_ini is None:
-            times = self.get_timestamps()
-            return np.array([self.heatmaps[t] for t in times])
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.heatmaps[times]
         else:
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.heatmaps[times]
-            else:
-                return np.array([self.heatmaps[t] for t in times])
+            return np.array([self.heatmaps[t] for t in times])
             
     def get_img(self, t):
         """ Return radar data image at time t """
@@ -321,73 +318,46 @@ class Reader(Plot_Handler):
 
     def get_groundtruth_pos(self,t_ini=None, t_final=None):
         """ Return groundtruth position for time between t_ini and t_final """        
-        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
-        
-        if t_ini is None:
-            times = self.get_timestamps()
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.groundtruth[times]['POSITION']
+        else:
             return np.array([self.groundtruth[t]['POSITION'] for t in times])
-        else:     
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.groundtruth[times]['POSITION']
-            else:
-                return np.array([self.groundtruth[t]['POSITION'] for t in times])
 
     def get_groundtruth_att(self,t_ini=None, t_final=None):
         """ Return groundtruth attitude for time between t_ini and t_final """        
-        assert hasattr(self,"groundtruth"), "No groundtruth loaded"
-        
-        if t_ini is None:
-            times = self.get_timestamps()
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.groundtruth[times]['ATTITUDE']
+        else:
             return [self.groundtruth[t]['ATTITUDE'] for t in times]
-        else:     
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.groundtruth[times]['ATTITUDE']
-            else:
-                return [self.groundtruth[t]['ATTITUDE'] for t in times]
             
     def get_gps_pos(self,t_ini=None, t_final=None):
-        """ Return GPS position for time between t_ini and t_final """
-        if t_ini is None:
-            times = self.get_timestamps()
+        """ Return GPS position for time between t_ini and t_final """    
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.heatmaps[times].gps_pos
+        else:
             return np.array([self.heatmaps[t].gps_pos for t in times])
-        else:     
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.heatmaps[times].gps_pos
-            else:
-                return np.array([self.heatmaps[t].gps_pos for t in times])
         
     def get_gps_att(self,t_ini=None, t_final=None):
         """ Return GPS attitude for time between t_ini and t_final """
-        if t_ini is None:
-            times = self.get_timestamps()
-            return [self.heatmaps[t].attitude for t in times]
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.heatmaps[times].attitude
         else:
-            times = self.get_timestamps(t_ini, t_final)
-            if t_final is None:
-                return self.heatmaps[times].attitude
-            else:
-                return [self.heatmaps[t].attitude for t in times]
+            return [self.heatmaps[t].attitude for t in times]
             
     def get_gps_speed(self, t_ini=None, t_final=None):
         """ Return GPS speed for time between t_ini and t_final """
-        if t_ini is None:
-            times = self.get_timestamps()
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return np.linalg.norm(self.heatmaps[self.get_timestamps(times+0.1)].gps_pos - self.heatmaps[self.get_timestamps(times)].gps_pos)/0.1
+        else:
             out = []
             for i in range(len(times)-1):
                 out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
             return out
-        else:
-            if t_final is None:
-                return np.linalg.norm(self.heatmaps[self.get_timestamps(t_ini+0.1, t_final)].gps_pos - self.heatmaps[self.get_timestamps(t_ini, t_final)].gps_pos)/0.1
-            else:
-                times = self.get_timestamps(t_ini, t_final)
-                out = []
-                for i in range(len(times)-1):
-                    out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
-                return out
             
     def plot_trajectory(self, arrow=False):
         """ Redefine Plot_Handler plot_trajectory function to plot only GPS trajectories """

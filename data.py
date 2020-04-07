@@ -65,8 +65,10 @@ class RadarData:
         if str(self.id)+"-"+str(otherdata.id) in trans_dict:
             translation, rotation = trans_dict[str(self.id)+"-"+str(otherdata.id)]
         else:
-            print("Calculating transformation: "+ str(self.id)+"-"+str(otherdata.id))
-         
+            if not otherdata.id is None:        
+                print("Calculating transformation: "+ str(self.id)+"-"+str(otherdata.id))
+            else:
+                print("Calculating transformation: "+ str(self.id))
             try:
                 # Restrict to predicted overlap
                 self_img, otherdata_img = self.image_overlap(otherdata)
@@ -74,7 +76,7 @@ class RadarData:
                 # ECC
                 warp_mode = cv2.MOTION_EUCLIDEAN
                 number_of_iterations = 500;
-                termination_eps = 1e-9;
+                termination_eps = 1e-7;
                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
                 warp_matrix = np.eye(2, 3, dtype=np.float32)
                 (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
@@ -95,7 +97,7 @@ class RadarData:
                     translation = np.nan
                     rotation = np.nan
             
-            if not (otherdata.id == -1 or self.id == -1) and not np.any(np.isnan(translation)):      
+            if not (otherdata.id is None or self.id is None) and not np.any(np.isnan(translation)):      
                 cv2_transformations = open("cv2_transformations.pickle","wb")
                 trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
                 pickle.dump(trans_dict, cv2_transformations)

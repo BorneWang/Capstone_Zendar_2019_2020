@@ -26,9 +26,9 @@ hdf5.run()                                              # Run preprocessor
 
 # User parameters
 dataset_name = 'radardata2_preprocessed.h5'
-start_time = 5
-end_time = 15
-build_map = True        # build map if true, if false calculate only positions
+start_time = 10
+end_time = np.inf
+build_map = False        # build map if true, if false calculate only positions
 display_map = True      # when mapping (build_map = True), displays the map at the same time
 use_groundtruth = True  # use groundtruth GPS value of SBG if true (because of problems in VN)
 use_fusion = False      # if True use a Kalman filter fusion between CV2 and GPS mesurement (not used for now because of CV2 biases)
@@ -77,11 +77,11 @@ if use_fusion:
 """
 # User parameters
 dataset_name = 'radardata2_preprocessed.h5'
-start_time = 275
+start_time = 265
 end_time = 360
-map_to_use = "map_20200307_1744"    # name of the map to use (should be in a folder maps/)
-mapping = False                     # update the map at the same as localizing (SLAM)
-display_map = True                  # when mapping, displays the map at the same time
+map_to_use = "radardata2_firstpass"     # name of the map to use (should be in a folder maps/)
+mapping = False                         # update the map at the same as localizing (SLAM)
+display_map = True                      # when mapping, displays the map at the same time
 
 
 # Loading data   
@@ -90,7 +90,7 @@ reader = Reader(dataset_name, start_time, end_time)
 # Creating Kalman filter for mapping
 kalman = Kalman_Localizer(mapping, map_to_use)
 # Initialize the first position and attitude
-kalman.set_initial_position(reader.groundtruth['POSITION'][0], reader.groundtruth['ATTITUDE'][0])
+kalman.set_initial_position(reader.get_groundtruth_pos(0), reader.get_groundtruth_att(0))
 # Creating recorder 
 recorder = Recorder(reader, kalman)
 

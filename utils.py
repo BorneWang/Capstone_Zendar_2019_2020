@@ -9,6 +9,8 @@ from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
+from pykml.factory import GX_ElementMaker as gx
+from pykml.factory import KML_ElementMaker as kml
 from scipy.spatial.transform import Rotation as rot
 
 def change_attributes_frame(img):
@@ -84,6 +86,15 @@ def stat_filter(x, p):
         out.append(np.multiply(x[i],np.greater_equal(stat.chi2.ppf(p, df=1), np.square(np.divide(x[i] - mean,std)))))
     return out
 
+def export_kml(filename, pos):
+    """ Export position in LLA to KML """
+    fld = kml.Document()
+    for i in range(len(pos)):
+        fld.append(kml.Placemark(kml.Point(kml.coordinates(str(pos[0])+","+str(pos[1])+","+str(pos[1])))))    
+    file = open(str(filename)+".kml","w") 
+    file.write(str(parser.etree.tostring(fld)))
+    file.close()
+
 def import_kml(filename):
     """ Import KML file by retreiving timestamps and positions """
     out = []
@@ -106,6 +117,11 @@ def rotation_proj(attitude1, attitude2):
     """ Project the rotation only on Z axis from attitude1 to attitude2 """
     r = attitude1.apply(attitude2.apply([1,0,0],True))
     return rot.from_dcm(np.array([[r[0], -r[1], 0.],[r[1], r[0], 0.],[0., 0., 1.]]))
+
+def rotation_ort(attitude1, attitude2):
+    """ Return the complement rotation from the projection on Z axis from attitude1 to attitude2 """
+    ort = attitude2*attitude1.inv()*rotation_proj(attitude1, attitude2)
+    return ort
 
 def ecef2lla(pos, inv=False):
     """ Convert position in ECEF frame to LLA """
