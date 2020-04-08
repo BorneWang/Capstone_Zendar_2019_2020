@@ -158,13 +158,13 @@ def ecef2enu(lat0, lon0):
     return rot.from_dcm(np.array([[0,-1,0],[1,0,0],[0,0,1]]).dot(Matlon.dot(MatLat.dot(MatNorthPole)).T))
 
 def rbd_translate(gps_positions, attitudes, trans):
-    """ Convert the position of the top left corner of image to car position """
-    if gps_positions.ndim == 1:
-        return gps_positions - attitudes.apply(trans, True)
+    """ Perform a translation in the given frame """
+    if not isinstance(attitudes, (np.ndarray, list)):
+        return gps_positions + attitudes.apply(trans, True)
     else:          
         car_pos = []
         for i in range(len(gps_positions)):
-            car_pos.append(gps_positions[i] - attitudes[i].apply(trans, True))
+            car_pos.append(gps_positions[i] + attitudes[i].apply(trans, True))
         return np.array(car_pos)
     
 def check_transform(data, rotation, translation, name):
