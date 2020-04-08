@@ -117,8 +117,10 @@ class RadarData:
             attitude = rotation.inv()*otherdata.attitude
         else:
             print("No cv2 measurement, use GPS instead")
-            gps_pos = self.gps_pos
-            attitude = self.attitude
+            trans = otherdata.earth2rbd(self.gps_pos-otherdata.gps_pos)
+            trans[2] = 0
+            gps_pos = self.gps_pos + otherdata.earth2rbd(trans, True)
+            attitude = rotation_proj(otherdata.attitude, self.attitude).inv()*otherdata.attitude
         return gps_pos, attitude
     
     def predict_image(self, gps_pos, attitude):

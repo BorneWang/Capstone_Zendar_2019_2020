@@ -10,7 +10,7 @@ import matplotlib.animation as animation
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, stat_filter
+from utils import rotation_proj, rbd_translate, stat_filter
 
 class Reader(Plot_Handler):
     
@@ -64,7 +64,7 @@ class Reader(Plot_Handler):
             
             # Importing radar images from dataset
             t0 = float(times[0])       
-            times = [times[i] for i in range(len(times)) if float(times[i])-t0>=t_ini and float(times[i])-t0<t_final]
+            times = [times[i] for i in range(len(times)) if float(times[i])-t0>=t_ini and float(times[i])-t0<=t_final]
             prev_perc = -1
             for i, t in enumerate(times):
                 if np.floor(i/(len(times)-1)*10) != prev_perc:
@@ -75,7 +75,7 @@ class Reader(Plot_Handler):
                     gps_pos = np.array(list(aperture[t].attrs['POSITION'][0]))
                     att = np.array(list(aperture[t].attrs['ATTITUDE'][0]))
                     self.heatmaps[float(t)-t0] = RadarData(float(t), np.array(Image.fromarray(heatmap, 'L')), gps_pos, rot.from_quat(att))
-            self.tracklog_translation = aperture.attrs['tracklog_translation']
+            self.tracklog_translation = -aperture.attrs['tracklog_translation']
             
             # Importing groundtruth GPS information if available
             aperture_gt = hdf5['radar']['broad01']
@@ -83,15 +83,15 @@ class Reader(Plot_Handler):
             if groundtruth:
                 print("Loading groundtruth")
                 aperture_gt = hdf5['radar']['broad01']['groundtruth']
-                self.groundtruth_translation = aperture_gt.attrs['tracklog_translation']
                 self.groundtruth = dict()
                 times_gt = list(aperture_gt.keys())
                 times_gt = [times_gt[i] for i in range(len(times_gt)) if (t_ini <= float(times_gt[i])-t0 < t_final) or (i+1<len(times_gt) and t_ini <= float(times_gt[i+1])-t0 < t_final) or (i-1>=0 and t_ini <= float(times_gt[i-1])-t0 < t_final)]
                 gt_att, gt_pos, gt_time = [], [], []
                 for i, t in enumerate(times_gt):
-                    gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))
                     gt_att.append(rot.from_quat(np.array(list(aperture_gt[t].attrs['ATTITUDE'][0]))))
+                    gt_pos.append(np.array(list(aperture_gt[t].attrs['POSITION'][0])))             
                     gt_time.append(float(t)-t0)
+                gt_pos = rbd_translate(gt_pos, gt_att, self.tracklog_translation - (-aperture_gt.attrs['tracklog_translation']))
                 
                 # Interpolating groundtruth positions to make them match with radar images positions
                 if times_gt[0]> times[0] or times_gt[-1]<times[-1]:
@@ -192,12 +192,12 @@ class Reader(Plot_Handler):
             plt.ylabel("Error (m)")
             if hasattr(self,"groundtruth"):
                 plt.title("Square root error of GPS and CV2 translations with groundtruth")
-                plt.plot(times[1:], np.linalg.norm(pos_error_gps, axis=1), label="GPS")
-                plt.plot(times[1:], np.linalg.norm(pos_error_cv2, axis=1), label="CV2")
+                plt.plot(times[1:], np.linalg.norm(pos_error_gps[:,0:2], axis=1), label="GPS")
+                plt.plot(times[1:], np.linalg.norm(pos_error_cv2[:,0:2], axis=1), label="CV2")
                 plt.legend()
             else:
                 plt.title("Square root error between GPS and CV2 translations")
-                plt.plot(times[1:], np.linalg.norm(pos_error, axis=1))
+                plt.plot(times[1:], np.linalg.norm(pos_error[:,0:2], axis=1))
         else:
             axis = ["x-axis", "y-axis", "z-axis"]
             for i in range(len(axis)):  
@@ -237,12 +237,12 @@ class Reader(Plot_Handler):
         
         if grouped:
             if hasattr(self,"groundtruth"):
-                print("Average GPS translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_gps, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_gps, axis=1), axis=0), 5))+ ")")
-                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_cv2, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_cv2, axis=1), axis=0), 5))+ ")")
+                print("Average GPS translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_gps[:,0:2], 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_gps[:,0:2], axis=1), axis=0), 5))+ ")")
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error_cv2[:,0:2], 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error_cv2[:,0:2], axis=1), axis=0), 5))+ ")")
                 print("Average GPS rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error_gps, 0.9)))),5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error_gps))), 5))+ ")")
                 print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error_cv2, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error_cv2))), 5))+ ")")
             else:
-                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error, 0.9), axis=1), axis=0),5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error, axis=1), axis=0), 5))+ ")")
+                print("Average cv2 translation error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(pos_error[:,0:2], 0.9), axis=1), axis=0),5)) + " (" +str(np.round(np.std(np.linalg.norm(pos_error[:,0:2], axis=1), axis=0), 5))+ ")")
                 print("Average cv2 rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(att_error, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(att_error))), 5))+ ")")
 
         else:

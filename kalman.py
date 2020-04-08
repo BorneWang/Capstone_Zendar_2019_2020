@@ -166,8 +166,6 @@ class Kalman_Localizer(Kalman):
     def __init__(self, mapping = False, name = None):          
         super().__init__(mapping, name)
         self.mapdata = Map(name)
-        self.pos2D = None
-        self.att2D = None
     
     def set_covariances(self, gps_pos_std, gps_att_std, cv2_trans_std, cv2_rot_std):
         """ Set covariances Q and R of the Kalman Filter """
@@ -176,10 +174,10 @@ class Kalman_Localizer(Kalman):
            
     def set_initial_position(self, gps_pos, attitude):
         """ Initialize the position of the car as a first guess """
-        self.position = deepcopy(gps_pos)
-        self.attitude = rotation_proj(self.mapdata.attitude, attitude).inv()*self.mapdata.attitude
-        self.pos2D = self.mapdata.attitude.apply(gps_pos - self.mapdata.gps_pos)[0:2]
-        self.att2D = rotation_proj(self.mapdata.attitude, attitude).as_euler('zxy')[0]
+        pos2D = self.mapdata.attitude.apply(gps_pos - self.mapdata.gps_pos)[0:2]
+
+        self.position = self.mapdata.gps_pos + self.mapdata.attitude.apply(np.array([pos2D[0], pos2D[1], 0]), True)
+        self.attitude = rotation_proj(self.mapdata.attitude, attitude).inv()*self.mapdata.attitude       
         
     def localize(self, new_data):
         """ Find the position of a image thanks to the map """
