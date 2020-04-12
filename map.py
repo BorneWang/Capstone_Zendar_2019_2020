@@ -8,15 +8,16 @@ from data import RadarData
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, increase_saturation, merge_img
+from utils import rotation_proj, increase_saturation, merge_img, data_projection, projection
 
 class Map():
     
     def __init__(self, name = None):
+        self.name = name
         self.img_cov = 10 # covariance of each the pixel value in an image
         
         self.chunk_size = 1000        
-        self.display ={'text': "0 ; 0", 'img': None, 'scale': 1, 'pos': np.array([0,0,0]), 'axes': None, 'fig':None, 'gps_pos':None} 
+        self.display ={'text': "0 ; 0", 'img': None, 'overlay_fig':None, 'overlay': None, 'scale': 1, 'pos': np.array([0,0,0]), 'axes': None, 'fig':None, 'gps_pos':None} 
         
         if name is None:
             # Create a black map
@@ -100,7 +101,7 @@ class Map():
             gps_pos = self.gps_pos + self.attitude.inv().apply(np.array([chunk_1[1]*self.chunk_size*self.precision, chunk_1[0]*self.chunk_size*self.precision, 0]))
         finally:            
             hdf5.close()
-        return img, cov_img, gps_pos, P9, P10
+        return img, cov_img, gps_pos
     
     def update_map(self, img, cov_img, pos):
         """ Updating part of the map with a given image """
@@ -120,7 +121,7 @@ class Map():
         if self.gps_pos is None:
             self.init_map(otherdata)
         
-        img1, cov_img1, new_origin, P9, P10 = self.build_partial_map(otherdata)
+        img1, cov_img1, new_origin = self.build_partial_map(otherdata)
         shape = np.shape(img1)
         
         v2 = self.attitude.apply(otherdata.gps_pos - new_origin)[0:2]/self.precision
@@ -138,7 +139,7 @@ class Map():
         self.update_map(img, cov_img, new_origin)
         return img1, img2, v2
         
-    def show(self, gps_pos = None):
+    def show(self, gps_pos = None, overlay=None):
         """ Show a matplotlib representation of the map 
             gps_pos: GPS pos where to show the map, origin of the map is used if not specified
         """
@@ -147,6 +148,8 @@ class Map():
         speed_scroll = 0.1
         shape = (1000, 2000)
         scroll_limit = 0.4
+        overlay_alpha = 0.5
+        border = 2
                 
         def press(event):
             if event.key == 'left':
@@ -157,8 +160,17 @@ class Map():
                 self.display['pos'] = self.display['pos'] - np.array([0,self.display['scale']*speed_trans*self.precision,0])
             elif event.key == 'down':               
                 self.display['pos'] = self.display['pos'] + np.array([0,self.display['scale']*speed_trans*self.precision,0])
-            img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
+            center = -self.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
+            img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos']+center,True), self.attitude, shape, self.display['scale'])
             self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
+            
+            if not self.display['overlay'] is None:
+                img_overlay = np.nan_to_num(self.display['overlay'].predict_image(self.display['gps_pos'] + self.attitude.apply(self.display['pos']+center,True), self.attitude, (int(np.ceil(shape[0]/self.display['scale'])), int(np.ceil(shape[1]/self.display['scale'])))))
+                overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
+                overlay_red[:,:,0] = img_overlay
+                overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+                self.display['overlay_fig'].set_data(increase_saturation(overlay_red.astype(np.uint8)))           
+            
             self.display['text'].set_text(str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)))
             plt.draw()
             
@@ -168,8 +180,18 @@ class Map():
                     self.display['scale'] = self.display['scale'] - speed_scroll*event.step
                 else:
                     self.display['scale'] = scroll_limit
-            img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
+                    
+            center = -self.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
+            img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'] + center, True), self.attitude, shape, self.display['scale'])           
             self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
+            
+            if not self.display['overlay'] is None:
+                img_overlay = np.nan_to_num(self.display['overlay'].predict_image(self.display['gps_pos']+self.attitude.apply(self.display['pos'] + center,True), self.attitude, (int(np.ceil(shape[0]/self.display['scale'])), int(np.ceil(shape[1]/self.display['scale'])))))
+                overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
+                overlay_red[:,:,0] = img_overlay
+                overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+                self.display['overlay_fig'].set_data(increase_saturation(overlay_red.astype(np.uint8)))
+            
             plt.draw()
             
         def close(event):
@@ -183,34 +205,65 @@ class Map():
                 self.display['gps_pos'] = deepcopy(self.gps_pos)
                 self.display['pos'] = np.append(gps_pos, 0)
             else:   
-                self.display['gps_pos'] = deepcopy(gps_pos)
+                self.display['gps_pos'] = projection(self.gps_pos, self.attitude, gps_pos)
                 if missing:
                     self.display['pos'] = np.array([0,0,0])
-            
-        if missing: 
-            self.display['text'] = "0 ; 0"
-            self.display['scale'] = 1
-            self.display['fig'] = plt.figure(num=self.map_name, facecolor=(1,1,1))
-            self.display['fig'].canvas.mpl_connect('key_press_event', press)
-            self.display['fig'].canvas.mpl_connect('scroll_event', scroll)
-            self.display['fig'].canvas.mpl_connect('close_event', close)
-            self.display['axes'] = plt.axes()
-            self.display['axes'].set_facecolor("black")
-            self.display['axes'].get_xaxis().set_visible(False)
-            self.display['axes'].get_yaxis().set_visible(False)
+        
+        center = -self.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
+        if not overlay is None:
+            self.display['overlay'] = data_projection(self.gps_pos, self.attitude, overlay)
+            img_border = 255*np.ones(np.shape(overlay.img))
+            img_border[border:-border,border:-border] = overlay.img[border:-border,border:-border]
+            self.display['overlay'].img = img_border
+        else:
+            self.display['overlay'] = None
+        if missing:
+            plt.close(self.map_name)
+            if self.display['fig'] is None:
+                self.display['text'] = "0 ; 0"
+                self.display['scale'] = 1
+                self.display['fig'] = plt.figure(num=self.map_name, facecolor=(1,1,1))
+                self.display['fig'].canvas.mpl_connect('key_press_event', press)
+                self.display['fig'].canvas.mpl_connect('scroll_event', scroll)
+                self.display['fig'].canvas.mpl_connect('close_event', close)
+                self.display['axes'] = plt.axes()
+                self.display['axes'].set_facecolor("black")
+                self.display['axes'].get_xaxis().set_visible(False)
+                self.display['axes'].get_yaxis().set_visible(False)
             if self.gps_pos is None:
                 img = np.nan*np.ones(shape)
             else:
-                img, _ = self.extract_from_map(self.display['gps_pos'], self.attitude, shape, self.display['scale'])
-            self.display['img'] = self.display['axes'].imshow(increase_saturation(np.nan_to_num(img)), cmap='gray', vmin=0, vmax=255)
+                img, _ = self.extract_from_map(self.display['gps_pos'] + self.attitude.apply(self.display['pos'] + center,True), self.attitude, shape, self.display['scale'])
+            self.display['img'] = self.display['axes'].imshow(increase_saturation(np.nan_to_num(img)), cmap='gray', vmin=0, vmax=255, zorder=1)
+            if not self.display['overlay'] is None:
+                img_overlay = np.nan_to_num(self.display['overlay'].predict_image(self.display['gps_pos'] + self.attitude.apply(self.display['pos']+ center,True), self.attitude, (int(np.ceil(shape[0]/self.display['scale'])), int(np.ceil(shape[1]/self.display['scale'])))))
+                overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
+                overlay_red[:,:,0] = img_overlay
+                overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+                self.display['overlay_fig'] = self.display['axes'].imshow(increase_saturation(overlay_red.astype(np.uint8)), alpha = 0.5, zorder=2, interpolation=None)
             self.display['text'] = self.display['axes'].text(0,0,str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)), color='black', horizontalalignment='left', verticalalignment='top',  transform= self.display['axes'].transAxes)
             plt.show()
         else:
             if self.gps_pos is None:
                 img = np.nan*np.ones(shape)
             else:
-                img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'],True), self.attitude, shape, self.display['scale'])
+                img, _ = self.extract_from_map(self.display['gps_pos']+self.attitude.apply(self.display['pos'] + center,True), self.attitude, shape, self.display['scale'])
             self.display['img'].set_data(increase_saturation(np.nan_to_num(img)))
+            
+            if not self.display['overlay'] is None:
+                img_overlay = np.nan_to_num(self.display['overlay'].predict_image(self.display['gps_pos']+self.attitude.apply(self.display['pos'] + center,True), self.attitude, (int(np.ceil(shape[0]/self.display['scale'])), int(np.ceil(shape[1]/self.display['scale'])))))
+                overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
+                overlay_red[:,:,0] = img_overlay
+                overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+                if self.display['overlay_fig'] is None:
+                    self.display['overlay_fig'] = self.display['axes'].imshow(increase_saturation(overlay_red.astype(np.uint8)), alpha = 0.5, zorder=2)
+                else:
+                    self.display['overlay_fig'].set_data(increase_saturation(overlay_red.astype(np.uint8)))
+            else:
+                if not self.display['overlay_fig'] is None:
+                    self.display['overlay_fig'].set_data(np.zeros((int(np.ceil(shape[0]/self.display['scale'])), int(np.ceil(shape[1]/self.display['scale'])),4)))
+                self.display['overlay_fig'] = None
+
             self.display['text'].set_text(str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)))
             plt.draw()
             plt.pause(0.001)
@@ -218,7 +271,7 @@ class Map():
     def extract_from_map(self, gps_pos, attitude, shape, scale=1):
         """ Return an image from the map for a given position and attitude and with a given shape """
         data_temp = RadarData(0, np.ones((int(np.ceil(shape[0]/scale)), int(np.ceil(shape[1]/scale)))), gps_pos, attitude, self.precision)
-        img1, cov_img1, new_origin, _, _ = self.build_partial_map(data_temp)
+        img1, cov_img1, new_origin = self.build_partial_map(data_temp)
 
         P_start = self.attitude.apply(new_origin - gps_pos)[0:2]/self.precision
         R = rotation_proj(self.attitude, attitude).inv().as_dcm()[:2,:2]

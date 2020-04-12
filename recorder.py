@@ -1,12 +1,15 @@
+import os
 import gmplot
 import pickle
 import datetime
 import numpy as np
+from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
+from matplotlib.animation import ArtistAnimation
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, rotation_ort, ecef2enu, ecef2lla, rbd_translate, stat_filter
+from utils import rotation_proj, rotation_ort, ecef2enu, ecef2lla, rbd_translate, stat_filter, increase_saturation, projection
 
 def define_reader(obj):
     if type(obj).__name__ =="Reader":
@@ -44,7 +47,7 @@ def add_altitude_line(obj, gps_pos, attitudes, label, color):
     map_origin, map_orientation = get_plot_origin(obj)
     pos = rbd_translate(gps_pos, attitudes, reader.tracklog_translation)
     trajectory = map_orientation.apply(pos - map_origin)       
-    plt.plot(reader.get_timestamps(), trajectory[:,2], color, label=label)
+    plt.plot(obj.get_timestamps(), trajectory[:,2], color, label=label)
 
 class Plot_Handler:
                
@@ -146,14 +149,14 @@ class Plot_Handler:
         q = rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]])
 
         if hasattr(reader,"groundtruth"):
-            plt.plot(reader.get_timestamps(), [rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_groundtruth_att()], 'black', label="Groundtruth")
-        plt.plot(reader.get_timestamps(), [rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_gps_att()], 'green', label="GPS")
+            plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_groundtruth_att()]), 'black', label="Groundtruth")
+        plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_gps_att()]), 'green', label="GPS")
         if not gps_only:            
-            plt.plot(reader.get_timestamps(), [rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes()], 'red', label="CV2")
+            plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes()]), 'red', label="CV2")
         if cv2_corrected and not gps_only:
-            plt.plot(reader.get_timestamps(), [rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes(cv2_corrected)], 'r--', label="CV2 corrected")
+            plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes(cv2_corrected)]), 'r--', label="CV2 corrected")
         if hasattr(self,"get_attitude") and len(self.get_attitude())!=0:
-            plt.plot(self.get_timestamps(0, np.inf), np.array([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_attitude()]), 'cornflowerblue', label="Output")
+            plt.plot(self.get_timestamps(0, np.inf), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_attitude()]), 'cornflowerblue', label="Output")
         
         plt.legend()
         plt.title("Yaw")
@@ -182,13 +185,16 @@ class Recorder(Plot_Handler):
         name = "recorder_"+str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")+".pickle"
         print("Saving " + name)
         record = open(name,"wb")
-        pickle.dump(self.kalman_record, record)
+        pickle.dump({"record": self.kalman_record, "src": self.reader.src, "kalman": self.kalman}, record)
         record.close()
         
     def import_record(self, name):
         """ Import recorded values from pickle """ 
         record = open(name+".pickle","rb")
-        self.kalman_record = pickle.load(record)
+        info = pickle.load(record)
+        self.kalman_record = info["record"]
+        self.reader.src = info["src"]
+        self.kalman = info["kalman"]
         record.close()
         
         self.reader.heatmaps = dict()
@@ -211,7 +217,7 @@ class Recorder(Plot_Handler):
                 plt.plot(self.get_timestamps(0, np.inf)[1:], [kalman['INNOVATION'][0].dot(np.linalg.inv(kalman['INNOVATION'][1])).dot(kalman['INNOVATION'][0])/stat.chi2.ppf(p, df=len(kalman['INNOVATION'][0])) for kalman in list(self.kalman_record.values())[1:]])
         
     def plot_kalman_evaluation(self, use_groundtruth = True, grouped=True):
-        """ Return a plot of the error of the Kalman in filter in the first image frame 
+        """ Return a plot of the error of the Kalman in filter in the map frame 
             use_groundtruth: if False compare Kalman filter performance with radar images GPS
             grouped: if True return norm of error instead of error of each component
         """
@@ -223,7 +229,7 @@ class Recorder(Plot_Handler):
         plt.title("Error in position of the Kalman filter in first image frame")
         if grouped:
             plt.plot(self.get_timestamps(0, np.inf), np.linalg.norm(error_pos[:,0:2],  axis=1))
-            print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos[:,0:2], 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos, axis=1), axis=0), 5))+ ")")
+            print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos[:,0:2], 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos[:,0:2], axis=1), axis=0), 5))+ ")")
         else:
             plt.plot(self.get_timestamps(0, np.inf), error_pos)
             plt.legend(["Right", "Backward", "Down"])
@@ -240,8 +246,66 @@ class Recorder(Plot_Handler):
             plt.plot(self.get_timestamps(0, np.inf), np.rad2deg(error_att))
             print("Average rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(error_att, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(error_att)), 5))+ ")")
     
+    def play_video(self, t_ini=0, t_final=np.inf, save=False):
+        """ Play a video of the car driving between t_ini and t_final
+            save: if True, save the video as a .mp4
+        """
+        shape = (1000,2000)
+        overlay_alpha = 0.5
+        border = 2
+        
+        # Handling pause/resume event when clicking on the video
+        anim_running = True
+        def onClick(event):
+            nonlocal anim_running
+            if anim_running:
+                ani.event_source.stop()
+                anim_running = False
+            else:
+                ani.event_source.start()
+                anim_running = True
+                
+        images = []
+        fig = plt.figure()
+        ax = plt.axes()
+        ax.set_facecolor("black")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+
+        def update(t):
+            center = -self.kalman.mapdata.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
+            gps_pos = projection(self.kalman.mapdata.gps_pos, self.kalman.mapdata.attitude, rbd_translate(self.get_position(t), self.get_attitude(t), self.reader.tracklog_translation))
+            img, _= self.kalman.mapdata.extract_from_map(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape)
+
+            data = deepcopy(self.reader.get_radardata(t))
+            data.gps_pos, data.gps_att = self.get_position(t), self.get_attitude(t)
+            img_border = 255*np.ones(np.shape(data.img))
+            img_border[border:-border,border:-border] = data.img[border:-border,border:-border]
+            data.img = img_border
+            img_overlay = np.nan_to_num(data.predict_image(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape))
+            overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
+            overlay_red[:,:,0] = img_overlay
+            overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+            return [plt.imshow(increase_saturation(np.nan_to_num(img)), cmap='gray', vmin=0, vmax=255, zorder=1), 
+                    plt.imshow(increase_saturation(overlay_red.astype(np.uint8)), alpha = 0.5, zorder=2, interpolation=None), 
+                    plt.text(0.6,0.5,str(round(t,2)))]
+
+        print("Creating video...")
+        for t in self.get_timestamps(t_ini, t_final):
+            images.append(update(t))
+
+        fig.canvas.mpl_connect('button_press_event', onClick)
+        ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
+        plt.show()
+        if save:
+            print("Saving video: "+str(name) + '.mp4')
+            name = str(self.kalman.mapdata.name) + str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")          
+            os.makedirs(os.path.dirname('Videos/' + name + '.mp4'), exist_ok=True)
+            ani.save('Videos/' + name + '.mp4')
+        return ani
+    
     def get_kalman_error(self, use_groundtruth = True):
-        """ Return error of the Kalman in filter in the first image frame 
+        """ Return error of the Kalman in filter in the map frame 
             use_groundtruth: if False compare Kalman filter performance with radar images GPS
         """
         if hasattr(self.reader,"groundtruth") and use_groundtruth:

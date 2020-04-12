@@ -1,4 +1,4 @@
-import pickle
+import shelve
 import numpy as np
 from os import path
 from PIL import Image
@@ -55,16 +55,15 @@ class RadarData:
     
     def image_transformation_from(self, otherdata):
         """ Return the translation and the rotation based on the two radar images """
-        if path.exists("cv2_transformations.pickle"):        
-            cv2_transformations = open("cv2_transformations.pickle","rb")
-            trans_dict = pickle.load(cv2_transformations)
+        translation, rotation = None, None   
+        if not (otherdata.id is None or self.id is None):
+            cv2_transformations = shelve.open("cv2_transformations", flag="r")
+            if cv2_transformations['use_dataset'] in cv2_transformations:
+                if str(self.id)+"-"+str(otherdata.id) in cv2_transformations[cv2_transformations['use_dataset']]:
+                    translation, rotation = cv2_transformations[cv2_transformations['use_dataset']][str(self.id)+"-"+str(otherdata.id)]
             cv2_transformations.close()
-        else:
-            trans_dict = dict()
             
-        if str(self.id)+"-"+str(otherdata.id) in trans_dict:
-            translation, rotation = trans_dict[str(self.id)+"-"+str(otherdata.id)]
-        else:
+        if translation is None or rotation is None:
             if not otherdata.id is None:        
                 print("Calculating transformation: "+ str(self.id)+"-"+str(otherdata.id))
             else:
@@ -98,9 +97,10 @@ class RadarData:
                     rotation = np.nan
             
             if not (otherdata.id is None or self.id is None) and not np.any(np.isnan(translation)):      
-                cv2_transformations = open("cv2_transformations.pickle","wb")
-                trans_dict[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
-                pickle.dump(trans_dict, cv2_transformations)
+                cv2_transformations = shelve.open("cv2_transformations", writeback=True)
+                if not cv2_transformations['use_dataset'] in cv2_transformations:
+                    cv2_transformations[cv2_transformations['use_dataset']] = dict()
+                cv2_transformations[cv2_transformations['use_dataset']][str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
                 cv2_transformations.close()  
             
         # just for test and vizualisation, could be removed()
@@ -123,24 +123,24 @@ class RadarData:
             attitude = rotation_proj(otherdata.attitude, self.attitude).inv()*otherdata.attitude
         return gps_pos, attitude
     
-    def predict_image(self, gps_pos, attitude):
+    def predict_image(self, gps_pos, attitude, shape=None):
         """ Give the prediction of an observation in a different position based on actual radar image """
-        exp_rot_matrix = rotation_proj(self.attitude, attitude).as_dcm()[:2,:2]
+        exp_rot_matrix = rotation_proj(attitude, self.attitude).as_dcm()[:2,:2]
+        exp_trans = attitude.apply(gps_pos - self.gps_pos)[0:2]/self.precision
+
+        if shape is None:            
+            shape = (np.shape(self.img)[1], np.shape(self.img)[0])
+        else:
+            shape = (shape[1], shape[0])
         
-        exp_trans = self.earth2rbd(gps_pos - self.gps_pos)[0:2]/self.precision
-        
-        shape = (np.shape(self.img)[1], np.shape(self.img)[0])
         warp_matrix = np.concatenate((exp_rot_matrix, np.array([[-exp_trans[0]],[-exp_trans[1]]])), axis = 1)
         predict_img = cv2.warpAffine(self.img, warp_matrix, shape, flags=cv2.INTER_LINEAR, borderValue = 0);
         
         mask = cv2.warpAffine(np.ones(np.shape(self.img)), warp_matrix, shape, flags=cv2.INTER_LINEAR, borderValue = 0);
-        diff = mask - np.ones(np.shape(self.img))
+        diff = mask - np.ones((shape[1], shape[0]))
         diff[diff != -1] = 0
         diff[diff == -1] = np.nan
         prediction = diff + predict_img
-
-        # just for test and vizualisation, could be removed()
-        # Image.fromarray(predict_img).save('radar2_2.png')
 
         return prediction
     

@@ -4,7 +4,7 @@ from copy import deepcopy
 from data import RadarData
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, rotation_ort, R, stat_test
+from utils import rotation_proj, rotation_ort, R, stat_test, projection
 
 class Kalman:
     """
@@ -174,15 +174,17 @@ class Kalman_Localizer(Kalman):
            
     def set_initial_position(self, gps_pos, attitude):
         """ Initialize the position of the car as a first guess """
-        pos2D = self.mapdata.attitude.apply(gps_pos - self.mapdata.gps_pos)[0:2]
-
-        self.position = self.mapdata.gps_pos + self.mapdata.attitude.apply(np.array([pos2D[0], pos2D[1], 0]), True)
-        self.attitude = rotation_proj(self.mapdata.attitude, attitude).inv()*self.mapdata.attitude       
-        
-    def localize(self, new_data):
+        self.position, self.attitude = projection(self.mapdata.gps_pos, self.mapdata.attitude, gps_pos, attitude)
+                
+    def localize(self, new_data, gps_guess=False):
         """ Find the position of a image thanks to the map """
-        mapping_img, _ = self.mapdata.extract_from_map(self.position, self.attitude, np.shape(new_data.img))
-        mapping_data = RadarData(None, mapping_img, self.position, self.attitude) 
+        if gps_guess:            
+            mapping_img, _ = self.mapdata.extract_from_map(new_data.gps_pos, new_data.attitude, np.shape(new_data.img))
+            gps_pos, attitude = projection(self.mapdata.gps_pos, self.mapdata.attitude, new_data.gps_pos, new_data.attitude)
+            mapping_data = RadarData(None, mapping_img, gps_pos, attitude) 
+        else:
+            mapping_img, _ = self.mapdata.extract_from_map(self.position, self.attitude, np.shape(new_data.img))
+            mapping_data = RadarData(None, mapping_img, self.position, self.attitude) 
 
         self.position, self.attitude = new_data.image_position_from(mapping_data)
         self.last_data = RadarData(new_data.id, new_data.img, self.position, self.attitude)

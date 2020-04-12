@@ -1,12 +1,13 @@
 import os
 import h5py
+import shelve
 import numpy as np
 from PIL import Image
 from copy import deepcopy
 from data import RadarData
 import matplotlib.pyplot as plt
 from recorder import Plot_Handler
-import matplotlib.animation as animation
+from matplotlib.animation import ArtistAnimation
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as rot
 
@@ -24,6 +25,10 @@ class Reader(Plot_Handler):
         self.bias = None
         
         self.load_heatmaps(t_ini, t_final)
+        
+        cv2_transformations = shelve.open("cv2_transformations")
+        cv2_transformations['use_dataset'] = self.src
+        cv2_transformations.close()
     
     def __iter__(self):
         self.iter = 0
@@ -132,6 +137,7 @@ class Reader(Plot_Handler):
         times = self.get_timestamps(t_ini, t_final)
         images = []       
         fig = plt.figure()
+        print("Creating video...")
         for t in times:
             plt.axis('off')
             if grayscale:              
@@ -139,8 +145,9 @@ class Reader(Plot_Handler):
             else:
                 images.append([plt.imshow(Image.fromarray(self.heatmaps[t].img)), plt.text(0.6,0.5,str(round(t,2)))])
         fig.canvas.mpl_connect('button_press_event', onClick)
-        ani = animation.ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
+        ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         if save:
+            print("Saving video: "+str(self.src) + '.mp4')
             os.makedirs(os.path.dirname('Videos/' + str(self.src) + '.mp4'), exist_ok=True)
             ani.save('Videos/' + str(self.src) + '.mp4')
         return ani

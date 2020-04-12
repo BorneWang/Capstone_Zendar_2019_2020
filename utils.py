@@ -9,9 +9,26 @@ from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
-from pykml.factory import GX_ElementMaker as gx
 from pykml.factory import KML_ElementMaker as kml
 from scipy.spatial.transform import Rotation as rot
+
+def projection(position_ref, attitude_ref, pos, att=None):
+    """ Project in a plane defined by attitude_ref and position_ref """
+    trans = attitude_ref.apply(pos-position_ref)
+    trans[2] = 0
+    new_pos = position_ref + attitude_ref.apply(trans, True)
+    if not att is None:
+        new_att = rotation_proj(attitude_ref, att).inv()*attitude_ref
+        return new_pos, new_att
+    else:
+        return new_pos
+
+def data_projection(position_ref, attitude_ref, data):
+    """ Project in a plane defined by attitude_ref and position_ref """
+    new_pos, new_att = projection(position_ref, attitude_ref, data.gps_pos, data.attitude)
+    new_data = deepcopy(data)
+    new_data.gps_pos, new_data.attitude = new_pos, new_att
+    return new_data
 
 def change_attributes_frame(img):
     """ Change attributes to CV2 (right-back-down) frame and position in top left corner """
@@ -59,7 +76,7 @@ def increase_saturation(img):
     gamma = 1.2
     im = np.power(sat*img/255, gamma)*255
     im[im >= 255] = 255
-    return im
+    return im.astype(np.uint8)
 
 def figure_save(number, name):
     os.makedirs(os.path.dirname("Figures/"+str(name)+'.pickle'), exist_ok=True)
