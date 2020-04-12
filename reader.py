@@ -6,6 +6,7 @@ from PIL import Image
 from copy import deepcopy
 from data import RadarData
 import matplotlib.pyplot as plt
+from sqlitedict import SqliteDict
 from recorder import Plot_Handler
 from matplotlib.animation import ArtistAnimation
 from scipy.spatial.transform import Slerp
@@ -26,7 +27,7 @@ class Reader(Plot_Handler):
         
         self.load_heatmaps(t_ini, t_final)
         
-        cv2_transformations = shelve.open("cv2_transformations")
+        cv2_transformations = SqliteDict('cv2_transformations.db', autocommit=True)
         cv2_transformations['use_dataset'] = self.src
         cv2_transformations.close()
     
