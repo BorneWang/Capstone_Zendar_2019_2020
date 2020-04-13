@@ -298,8 +298,8 @@ class Recorder(Plot_Handler):
         ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
         plt.show()
         if save:
-            print("Saving video: "+str(name) + '.mp4')
             name = str(self.kalman.mapdata.name) + str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")          
+            print("Saving video: "+str(name) + '.mp4')
             os.makedirs(os.path.dirname('Videos/' + name + '.mp4'), exist_ok=True)
             ani.save('Videos/' + name + '.mp4')
         return ani
