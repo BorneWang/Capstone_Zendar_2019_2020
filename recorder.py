@@ -6,7 +6,7 @@ import numpy as np
 from copy import deepcopy
 import scipy.stats as stat
 import matplotlib.pyplot as plt
-from matplotlib.animation import ArtistAnimation
+import matplotlib.animation as animation
 from scipy.spatial.transform import Rotation as rot
 
 from utils import rotation_proj, rotation_ort, ecef2enu, ecef2lla, rbd_translate, stat_filter, increase_saturation, projection
@@ -178,7 +178,7 @@ class Recorder(Plot_Handler):
          
     def record(self, ts):
         """ Record value in a dictionary for later use """
-        self.kalman_record[ts] = {'ATTITUDE': self.kalman.attitude, 'POSITION': self.kalman.position, 'INNOVATION': self.kalman.innovation}
+        self.kalman_record[ts] = {'ATTITUDE': self.kalman.attitude, 'POSITION': self.kalman.position, 'INNOVATION': self.kalman.innovation, 'COVARIANCE': self.kalman.P, 'BIAS':self.kalman.bias}
         
     def save(self):
         """ Save values recorded by the recorder """
@@ -216,104 +216,65 @@ class Recorder(Plot_Handler):
             else:
                 plt.plot(self.get_timestamps(0, np.inf)[1:], [kalman['INNOVATION'][0].dot(np.linalg.inv(kalman['INNOVATION'][1])).dot(kalman['INNOVATION'][0])/stat.chi2.ppf(p, df=len(kalman['INNOVATION'][0])) for kalman in list(self.kalman_record.values())[1:]])
         
-    def plot_kalman_evaluation(self, use_groundtruth = True, grouped=True):
+    def plot_kalman_evaluation(self, use_groundtruth = True, grouped=True, covariances=True):
         """ Return a plot of the error of the Kalman in filter in the map frame 
             use_groundtruth: if False compare Kalman filter performance with radar images GPS
             grouped: if True return norm of error instead of error of each component
         """
-        error_pos, error_att = self.get_kalman_error(use_groundtruth = True)
+        error_pos, error_att = self.get_kalman_error(use_groundtruth = use_groundtruth)
         
         plt.figure()
-        plt.xlabel("Time (s)")
-        plt.ylabel("Error (m)")
-        plt.title("Error in position of the Kalman filter in first image frame")
+        ax = plt.axes()
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Error (m)")
+        ax.set_title("Error in position of the Kalman filter in map frame")
         if grouped:
-            plt.plot(self.get_timestamps(0, np.inf), np.linalg.norm(error_pos[:,0:2],  axis=1))
-            print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos[:,0:2], 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos[:,0:2], axis=1), axis=0), 5))+ ")")
+            ax.plot(self.get_timestamps(0, np.inf), np.linalg.norm(error_pos[:,0:2],  axis=1))
+            print("Average position error (m): " + str(np.round(np.mean(np.linalg.norm(stat_filter(error_pos, 0.9), axis=1), axis=0), 5)) + " (" +str(np.round(np.std(np.linalg.norm(error_pos, axis=1), axis=0), 5))+ ")")
         else:
-            plt.plot(self.get_timestamps(0, np.inf), error_pos)
-            plt.legend(["Right", "Backward", "Down"])
+            ax.plot(self.get_timestamps(0, np.inf), error_pos)
+            ax.legend(["Right", "Backward"])
             print("Average position error (m): " + str(np.round(np.mean(stat_filter(error_pos, 0.9), axis=0), 5)) + " (" +str(np.round(np.std(stat_filter(error_pos, 0.9), axis=0), 5))+ ")")
-       
+            if covariances:
+                lines = ax.get_lines()
+                for i in range(0, len(lines)):
+                    ax.plot(self.get_timestamps(0, np.inf), np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(i)),'--', color=lines[i].get_color())
+        
         plt.figure()
-        plt.xlabel("Time (s)")
-        plt.ylabel("Error (deg)")
-        plt.title("Error in attitude of the Kalman filter in first image frame")
+        ax = plt.axes()
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Error (deg)")
+        ax.set_title("Error in attitude of the Kalman filter in map frame")
         if grouped:
-            plt.plot(self.get_timestamps(0, np.inf), abs(np.rad2deg(error_att)))
+            ax.plot(self.get_timestamps(0, np.inf), abs(np.rad2deg(error_att)))
             print("Average rotation error (deg): " + str(np.round(np.rad2deg(np.mean(np.abs(stat_filter(error_att, 0.9)))), 5)) + " (" +str(np.round(np.rad2deg(np.std(np.abs(error_att))), 5))+ ")")
         else:
-            plt.plot(self.get_timestamps(0, np.inf), np.rad2deg(error_att))
+            ax.plot(self.get_timestamps(0, np.inf), np.rad2deg(error_att))
             print("Average rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(error_att, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(error_att)), 5))+ ")")
+            if covariances:
+                lines = ax.get_lines()
+                for i in range(0, len(lines)):
+                    ax.plot(self.get_timestamps(0, np.inf), np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(2)),'--', color=lines[i].get_color())
     
-    def play_video(self, t_ini=0, t_final=np.inf, save=False):
-        """ Play a video of the car driving between t_ini and t_final
-            save: if True, save the video as a .mp4
-        """
-        shape = (1000,2000)
-        overlay_alpha = 0.5
-        border = 2
-        
-        # Handling pause/resume event when clicking on the video
-        anim_running = True
-        def onClick(event):
-            nonlocal anim_running
-            if anim_running:
-                ani.event_source.stop()
-                anim_running = False
-            else:
-                ani.event_source.start()
-                anim_running = True
-                
-        images = []
-        fig = plt.figure()
-        ax = plt.axes()
-        ax.set_facecolor("black")
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-
-        def update(t):
-            center = -self.kalman.mapdata.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
-            gps_pos = projection(self.kalman.mapdata.gps_pos, self.kalman.mapdata.attitude, rbd_translate(self.get_position(t), self.get_attitude(t), self.reader.tracklog_translation))
-            img, _= self.kalman.mapdata.extract_from_map(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape)
-
-            data = deepcopy(self.reader.get_radardata(t))
-            data.gps_pos, data.gps_att = self.get_position(t), self.get_attitude(t)
-            img_border = 255*np.ones(np.shape(data.img))
-            img_border[border:-border,border:-border] = data.img[border:-border,border:-border]
-            data.img = img_border
-            img_overlay = np.nan_to_num(data.predict_image(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape))
-            overlay_red = np.zeros((np.shape(img_overlay)[0], np.shape(img_overlay)[1], 4))
-            overlay_red[:,:,0] = img_overlay
-            overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
-            return [plt.imshow(increase_saturation(np.nan_to_num(img)), cmap='gray', vmin=0, vmax=255, zorder=1), 
-                    plt.imshow(increase_saturation(overlay_red.astype(np.uint8)), alpha = 0.5, zorder=2, interpolation=None), 
-                    plt.text(0.6,0.5,str(round(t,2)))]
-
-        print("Creating video...")
-        for t in self.get_timestamps(t_ini, t_final):
-            images.append(update(t))
-
-        fig.canvas.mpl_connect('button_press_event', onClick)
-        ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
-        plt.show()
-        if save:
-            name = str(self.kalman.mapdata.name) + str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")          
-            print("Saving video: "+str(name) + '.mp4')
-            os.makedirs(os.path.dirname('Videos/' + name + '.mp4'), exist_ok=True)
-            ani.save('Videos/' + name + '.mp4')
-        return ani
-    
-    def get_kalman_error(self, use_groundtruth = True):
+    def get_kalman_error(self, t_ini=None, t_final=None, use_groundtruth = True):
         """ Return error of the Kalman in filter in the map frame 
             use_groundtruth: if False compare Kalman filter performance with radar images GPS
         """
-        if hasattr(self.reader,"groundtruth") and use_groundtruth:
-            error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_groundtruth_pos(ts)) for ts in self.get_timestamps(0, np.inf)])
-            error_att = np.array([rotation_proj(self.reader.get_groundtruth_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in self.get_timestamps(0, np.inf)])
-        else:    
-            error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_gps_pos(ts)) for ts in self.get_timestamps(0, np.inf)])  
-            error_att = np.array([rotation_proj(self.reader.get_gps_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in self.get_timestamps(0, np.inf)])
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            if hasattr(self.reader,"groundtruth") and use_groundtruth:
+                error_pos = self.kalman.mapdata.attitude.apply(self.get_position(times)-self.reader.get_groundtruth_pos(times))[0:2]
+                error_att = rotation_proj(self.reader.get_groundtruth_att(times), self.get_attitude(times)).as_euler('zxy')[0]
+            else:    
+                error_pos = self.kalman.mapdata.attitude.apply(self.get_position(times)-self.reader.get_gps_pos(times))[0:2]
+                error_att = rotation_proj(self.reader.get_gps_att(times), self.get_attitude(times)).as_euler('zxy')[0]
+        else:
+            if hasattr(self.reader,"groundtruth") and use_groundtruth:
+                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_groundtruth_pos(ts))[0:2] for ts in times])
+                error_att = np.array([rotation_proj(self.reader.get_groundtruth_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in times])
+            else:    
+                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_gps_pos(ts))[0:2] for ts in times])  
+                error_att = np.array([rotation_proj(self.reader.get_gps_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in times])
         return error_pos, error_att  
 
     def get_timestamps(self, t_ini=None, t_final=None):
@@ -399,3 +360,113 @@ class Recorder(Plot_Handler):
             return self.measured_pos_corr
         else:           
             return self.measured_pos
+        
+    def get_covariances(self, state, t_ini=None, t_final=None):
+        """ Return covariance for given state """
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.kalman_record[times]['COVARIANCE'][state, state]
+        else:
+            return np.array([self.kalman_record[t]['COVARIANCE'][state, state] for t in times])
+        
+    def get_bias(self, t_ini=None, t_final=None):
+        """ Return covariance for given state """
+        times = self.get_timestamps(t_ini, t_final)
+        if not t_ini is None and t_final is None:
+            return self.kalman_record[times]['BIAS']
+        else:
+            return np.array([self.kalman_record[t]['BIAS'] for t in times])
+        
+    def play_video(self, t_ini=0, t_final=np.inf, save=False):
+        """ Play a video of the car driving between t_ini and t_final
+            save: if True, save the video as a .mp4
+        """
+        shape = (1000,2000)
+        overlay_alpha = 0.7
+        border = 2
+        bar_scale = 1
+        
+        # Handling pause/resume event when clicking on the video
+        anim_running = True
+        def onClick(event):
+            nonlocal anim_running
+            if anim_running:
+                ani.event_source.stop()
+                anim_running = False
+            else:
+                ani.event_source.start()
+                anim_running = True
+                
+        fig = plt.figure(facecolor='black')
+        fig.set_figwidth(8)
+        fig.canvas.mpl_connect('button_press_event', onClick)
+        ax = plt.axes()     
+        [ax.spines[spine].set_color('white') for spine in ax.spines]
+        ax.set_facecolor("black")
+        ax.tick_params(colors='black')
+        image = ax.imshow(np.zeros(shape), cmap='gray', vmin=0, vmax=255, zorder=1)
+        overlay = ax.imshow(np.zeros((shape[0], shape[1],3)), alpha = 0.5, zorder=2, interpolation=None)
+        text = ax.text(0.6,0.8,"", color='white')
+
+        ax2 = fig.add_axes([0.07, 0.15,0.03,0.7])
+        ax2.axis([0,1,0,bar_scale])
+        ax2.set_facecolor("black")
+        ax2.yaxis.label.set_color('white')
+        ax2.yaxis.set_tick_params(colors='white')
+        ax2.get_xaxis().set_visible(False)
+        ax2.set_ylabel("Error in position (m)")
+        bar = ax2.imshow(np.flip(np.atleast_2d(np.linspace(0,0,256))).T, aspect="auto", zorder=0, norm=plt.cm.colors.NoNorm(vmin=0,vmax=bar_scale), cmap=plt.cm.get_cmap('rainbow', 256),extent=[0,1,0,0])
+
+        img_list = dict()
+        overlay_list = dict()
+        error_list = dict()
+        overlay_red = np.zeros((shape[0], shape[1], 4))
+        
+        def process_images(t):
+            center = -self.kalman.mapdata.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
+            gps_pos = projection(self.kalman.mapdata.gps_pos, self.kalman.mapdata.attitude, rbd_translate(self.get_position(t), self.get_attitude(t), self.reader.tracklog_translation))
+            img, _= self.kalman.mapdata.extract_from_map(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape)
+
+            data = deepcopy(self.reader.get_radardata(t))
+            data.gps_pos, data.attitude = self.get_position(t), self.get_attitude(t)
+            img_border = 255*np.ones(np.shape(data.img))
+            img_border[border:-border,border:-border] = data.img[border:-border,border:-border]
+            data.img = img_border
+            img_overlay = np.nan_to_num(data.predict_image(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape))
+            error = np.min([np.linalg.norm(self.get_kalman_error(t)[0][0:2]), bar_scale])
+            return increase_saturation(np.nan_to_num(img)), increase_saturation(img_overlay), error
+
+        def update(t):
+            img_overlay, error = overlay_list[t], error_list[t]
+            overlay_red[:,:,0] = img_overlay
+            overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
+            image.set_data(img_list[t])
+            overlay.set_data(overlay_red.astype(np.uint8))
+            text.set_text(str(round(t,2)))
+            bar.set_data(np.flip(np.atleast_2d(np.linspace(0,error,256))).T)
+            bar.set_extent(extent=[0,1,0,error])
+            return [image, overlay, text, bar]
+
+        def init_func():
+            image.set_data(np.zeros(shape))
+            overlay.set_data(np.zeros((shape[0], shape[1],3)))
+            text.set_text("")
+            bar.set_data(np.flip(np.atleast_2d(np.linspace(0,0,256))).T)
+            bar.set_extent(extent=[0,1,0,0])
+            return [image, overlay, text, bar]
+
+        print("Creating video...")
+        for t in self.get_timestamps(t_ini, t_final):
+            img, img_overlay, error = process_images(t)
+            img_list[t] = img
+            overlay_list[t] = img_overlay
+            error_list[t] = error
+            
+        ani = animation.FuncAnimation(fig, update, self.get_timestamps(t_ini, t_final), init_func = init_func, interval=100, blit=False, repeat_delay=1000)
+        if save:
+            name = str(self.kalman.mapdata.name) +"_"+ str(datetime.datetime.now())[0:16].replace(" ","_").replace(":","").replace("-","")          
+            print("Saving video: "+str(name) + '.mp4')
+            os.makedirs(os.path.dirname('Videos/' + name + '.mp4'), exist_ok=True)
+            ani.save('Videos/' + name + '.mp4', fps=10, dpi=200, savefig_kwargs={'facecolor': 'black'})
+        plt.show()
+        return ani

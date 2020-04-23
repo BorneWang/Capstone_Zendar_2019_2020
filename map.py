@@ -118,7 +118,7 @@ class Map():
                 
     def add_data(self, otherdata):
         """ Fusionning a new radardata with part of the map """
-        if self.gps_pos is None:
+        if self.gps_pos is None or self.attitude is None:
             self.init_map(otherdata)
         
         img1, cov_img1, new_origin = self.build_partial_map(otherdata)
@@ -222,14 +222,16 @@ class Map():
             if self.display['fig'] is None:
                 self.display['text'] = "0 ; 0"
                 self.display['scale'] = 1
-                self.display['fig'] = plt.figure(num=self.map_name, facecolor=(1,1,1))
+                self.display['fig'] = plt.figure(num=self.map_name, facecolor='black')
                 self.display['fig'].canvas.mpl_connect('key_press_event', press)
                 self.display['fig'].canvas.mpl_connect('scroll_event', scroll)
                 self.display['fig'].canvas.mpl_connect('close_event', close)
+                self.display['fig'].tight_layout()
                 self.display['axes'] = plt.axes()
                 self.display['axes'].set_facecolor("black")
-                self.display['axes'].get_xaxis().set_visible(False)
-                self.display['axes'].get_yaxis().set_visible(False)
+                self.display['axes'].tick_params(colors='black')
+                [self.display['axes'].spines[spine].set_color('white') for spine in self.display['axes'].spines]        
+
             if self.gps_pos is None:
                 img = np.nan*np.ones(shape)
             else:
@@ -241,7 +243,7 @@ class Map():
                 overlay_red[:,:,0] = img_overlay
                 overlay_red[:,:,3] = (img_overlay != 0)*overlay_alpha*255
                 self.display['overlay_fig'] = self.display['axes'].imshow(increase_saturation(overlay_red.astype(np.uint8)), alpha = 0.5, zorder=2, interpolation=None)
-            self.display['text'] = self.display['axes'].text(0,0,str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)), color='black', horizontalalignment='left', verticalalignment='top',  transform= self.display['axes'].transAxes)
+            self.display['text'] = self.display['axes'].text(0,0,str(round(self.display['pos'][0],2))+" ; "+ str(round(self.display['pos'][1],2)), color='white', horizontalalignment='left', verticalalignment='top',  transform= self.display['axes'].transAxes)
             plt.show()
         else:
             if self.gps_pos is None:

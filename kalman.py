@@ -4,13 +4,13 @@ from copy import deepcopy
 from data import RadarData
 from scipy.spatial.transform import Rotation as rot
 
-from utils import rotation_proj, rotation_ort, R, stat_test, projection
+from utils import rotation_proj, rotation_ort, stat_test, projection
 
 class Kalman:
     """
     Class used as a basis for all Kalman filter classes
     """   
-    def __init__(self, mapping = True, name = None):
+    def __init__(self, mapping = True, name = None, bias_estimation = False):
         self.mapping = mapping
         if mapping:
             self.mapdata = Map(name)
@@ -18,27 +18,27 @@ class Kalman:
             self.mapdata = None
         self.last_data = None
         
-        self.position = None # in ECEF
-        self.attitude = None # from ECEF to rbd
-        
-        self.prev_pos2D = np.zeros(2) # (x,y) position on the map
-        self.prev_att2D = 0 # orientation in the map frame
-        self.trans = np.zeros(2) # translation from the previous image (not in the map frame !)
-        self.rot = 0 # orientation from the previous image (not in the map frame !)
-        
+        self.position = None            # position in ECEF
+        self.attitude = None            # from ECEF to rbd
+        self.pos2D = np.zeros(2)        # position in 2D map
+        self.att2D = 0                  # attitude in 2D map
+
         self.innovation = None
+        
+        self.bias_estimation = bias_estimation
+        self.bias = np.zeros(3)
         
         self.init_default_covariance()
       
     def init_default_covariance(self):
         """ Initialize the covariances with default values """
-        gps_pos_std = 0.05          # standard deviation of GPS position measurement
-        gps_att_std = np.deg2rad(1) # standard deviation of GPS attitude measurement
-        cv2_trans_std = 0.04        # standard deviation of CV2 translation measurement
-        cv2_rot_std = np.deg2rad(1) # standard deviation of CV2 rotation measurement
-        self.set_covariances(gps_pos_std, gps_att_std, cv2_trans_std, cv2_rot_std)
-        self.P = np.zeros((6,6)) # the initial 2D position and orientation is known to be (0,0)
-        
+        self.Q = np.block([[np.array([[0.00051736, -0.00091164],[-0.00091164,  0.00519678]]), np.zeros((2,1))],[np.zeros(2), 3.54317141e-06]])  # determined from reader.plot_gps_evaluation
+        self.R = np.diag([0.01**2, 0.01**2, np.deg2rad(0.1)**2])
+        if self.bias_estimation:
+            self.P = np.block([[self.R, np.zeros((3,3))],[np.zeros((3,3)),np.diag([0.01**2, 0.01**2, np.deg2rad(0.001)**2])]])
+        else:
+            self.P = deepcopy(self.R)
+                
     def set_initial_position(self, gps_pos, attitude):
         """ Set the initial position of the map in ECEF """
         self.position = deepcopy(gps_pos)
@@ -53,7 +53,7 @@ class Kalman:
             if not (self.position is None):
                 new_data = RadarData(new_data.id, new_data.img, self.position, new_data.attitude)
             if not (self.attitude is None): 
-                new_data = RadarData(new_data.id, new_data.img, new_data.position, self.attitude)
+                new_data = RadarData(new_data.id, new_data.img, new_data.gps_pos, self.attitude)
             
             if self.mapping:
                 self.mapdata.add_data(new_data)
@@ -79,87 +79,97 @@ class Kalman:
                 self.mapdata.add_data(self.last_data)
         return deepcopy(self.position), deepcopy(self.attitude)
 
-
-class Kalman_Mapper_GPSCV2(Kalman):
+class Kalman_Mapper_CV2GPS(Kalman):
     """
     Prediction : GPS
     Measurement : CV2
     """
-    def set_covariances(self, gps_pos_std, gps_att_std, cv2_trans_std, cv2_rot_std):
+    def set_covariances(self, gps_pos_std, gps_att_std, cv2_trans_std, cv2_rot_std, bias_trans_std=None, bias_rot_std=None):
         """ Set covariances Q and R of the Kalman Filter """
-        self.Q = np.block([[np.zeros((3,3)), np.zeros((3,3))],[ np.zeros((3,3)), np.diag([gps_pos_std**2, gps_pos_std**2, gps_att_std**2])]])
-        self.R = np.diag([cv2_trans_std**2, cv2_trans_std**2, cv2_rot_std**2])
+        self.Q = np.diag([cv2_trans_std**2, cv2_trans_std**2, cv2_rot_std**2])
+        self.R = np.diag([gps_pos_std**2, gps_pos_std**2, gps_att_std**2])
+        if self.bias_estimation:
+            if not bias_rot_std is None:
+                self.P = np.diag([gps_pos_std**2, gps_pos_std**2, gps_att_std**2, bias_trans_std**2, bias_trans_std**2, bias_rot_std**2])
+        else:
+            self.P = deepcopy(self.R)
         
     def predict(self, new_data):
-        """ Based on GPS pos of the new data, predict new state X """
-        pos2D = self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[0:2]
-        att2D = rotation_proj(self.mapdata.attitude, new_data.attitude).as_euler('zxy')[0]
-
-        F1 =np.array([[1, 0, -self.trans[0]*np.sin(self.prev_att2D)-self.trans[1]*np.cos(self.prev_att2D), np.cos(self.prev_att2D), -np.sin(self.prev_att2D), 0],
-                      [0, 1, self.trans[0]*np.cos(self.prev_att2D)-self.trans[1]*np.sin(self.prev_att2D), np.sin(self.prev_att2D), np.cos(self.prev_att2D), 0],
-                      [0, 0, 1, 0, 0, 1]])
-        #F2 = np.array([[0, 0, -(pos2D-self.prev_pos2D)[0]*np.sin(self.prev_att2D+self.rot)+(pos2D-self.prev_pos2D)[0]*np.cos(self.prev_att2D+self.rot), 0, 0, -(pos2D-self.prev_pos2D)[0]*np.sin(self.prev_att2D+self.rot)+(pos2D-self.prev_pos2D)[0]*np.cos(self.prev_att2D+self.rot)],
-        #               [0, 0, -(pos2D-self.prev_pos2D)[1]*np.cos(self.prev_att2D+self.rot)-(pos2D-self.prev_pos2D)[1]*np.sin(self.prev_att2D+self.rot), 0, 0, -(pos2D-self.prev_pos2D)[1]*np.cos(self.prev_att2D+self.rot)-(pos2D-self.prev_pos2D)[1]*np.sin(self.prev_att2D+self.rot)],
-        #               [0, 0, -1, 0, 0, 0]])
-        F2 = np.array([[-np.cos(self.prev_att2D+self.rot), -np.sin(self.prev_att2D+self.rot), -(pos2D-self.prev_pos2D)[0]*np.sin(self.prev_att2D+self.rot)+(pos2D-self.prev_pos2D)[0]*np.cos(self.prev_att2D+self.rot), -np.cos(self.rot), -np.sin(self.rot), -(pos2D-self.prev_pos2D)[0]*np.sin(self.prev_att2D+self.rot)+(pos2D-self.prev_pos2D)[0]*np.cos(self.prev_att2D+self.rot) + self.trans[0]*np.sin(self.rot) - self.trans[1]*np.cos(self.rot)],
-                       [ np.sin(self.prev_att2D+self.rot), -np.cos(self.prev_att2D+self.rot), -(pos2D-self.prev_pos2D)[1]*np.cos(self.prev_att2D+self.rot)-(pos2D-self.prev_pos2D)[1]*np.sin(self.prev_att2D+self.rot), np.sin(self.rot), -np.cos(self.rot), -(pos2D-self.prev_pos2D)[1]*np.cos(self.prev_att2D+self.rot)-(pos2D-self.prev_pos2D)[1]*np.sin(self.prev_att2D+self.rot) + self.trans[0]*np.cos(self.rot) + self.trans[1]*np.sin(self.rot)],
-                       [0, 0, -1, 0, 0, -1]])
-        F = np.block([[F1],[F2-F1]])
-    
-        self.prev_pos2D = self.prev_pos2D + R(-self.prev_att2D).dot(self.trans)
-        self.prev_att2D = self.prev_att2D + self.rot
-        
-        self.trans = R(self.prev_att2D).dot(pos2D - self.prev_pos2D)
-        self.rot = att2D - self.prev_att2D
-                
-        self.P = F.dot(self.P).dot(F.T) + self.Q
-    
-    def update(self, new_data):
-        """ Update the state X thanks to image transformation measurement """
+        """ Based on image transformation measurement, predict new state X """
         trans, rotation = new_data.image_transformation_from(self.last_data) 
-        if not np.isnan(trans):
-            Y = np.append(trans[0:2], rotation.as_euler('zxy')[0])
-            Yhat = np.append(self.trans, self.rot)
-            
-            H = np.block([np.zeros((3,3)), np.eye(3)])
-            S = H.dot(self.P).dot(H.T) + self.R
-            K = self.P.dot(H.T).dot(np.linalg.inv(S))
-            Z = stat_test(Y, Yhat, S, 0.99)*(Y - Yhat)
-            e = K.dot(Z)
-    
-            self.prev_pos2D = self.prev_pos2D  + e[0:2]
-            self.prev_att2D = self.prev_att2D + e[2]
-            self.trans = self.trans + e[3:5]
-            self.rot = self.rot + e[5]
-    
-            self.P = (np.eye(len(self.P)) - K.dot(H)).dot(self.P)
-            self.innovation = (Z, S)
-        else:
-            self.innovation = (np.zeros(len(self.trans)+len(self.rot)), H.dot(self.P).dot(H.T) + self.R)
         
-class Kalman_Mapper_GPSCV2_3D(Kalman_Mapper_GPSCV2):
+        R = np.array([[np.cos(self.att2D), -np.sin(self.att2D)],[np.sin(self.att2D), np.cos(self.att2D)]])
+        if not np.any(np.isnan(trans)):
+            self.pos2D = self.pos2D + R.dot(trans[0:2] + self.bias[0:2])
+            self.att2D = self.att2D + rotation.as_euler('zxy')[0] + self.bias[2]
+        else:
+            self.pos2D = self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[0:2]
+            self.att2D = rotation_proj(self.mapdata.attitude, new_data.attitude).as_euler("zxy")[0]
+        
+        F = np.array([[1, 0, -np.sin(self.att2D)*trans[0]-np.cos(self.att2D)*trans[1]],
+                      [0, 1, np.cos(self.att2D)*trans[0]-np.sin(self.att2D)*trans[1]],
+                      [0, 0, 1]])
+        M = np.array([[np.cos(self.att2D), -np.sin(self.att2D), 0],
+                      [np.sin(self.att2D), np.cos(self.att2D), 0],
+                      [0, 0, 1]])
+        if self.bias_estimation:
+            F = np.block([[F, np.block([[R, np.zeros((2,1))],[np.zeros(2), 1]])],[np.zeros((3,3)), np.eye(3)]])
+            M = np.block([[M], [np.zeros((3,3))]])
+            self.P = F.dot(self.P).dot(F.T) + M.dot(self.Q).dot(M.T)
+        else:
+            self.P = F.dot(self.P).dot(F.T) + M.dot(self.Q).dot(M.T)
+        
+    def update(self, new_data):
+        """ Update the state X thanks to GPS information """
+        pos2D = self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[0:2]
+        att2D = rotation_proj(self.mapdata.attitude, new_data.attitude).as_euler("zxy")[0]
+        Y = np.append(pos2D, att2D)
+        Yhat = np.append(self.pos2D, self.att2D)
+
+        if self.bias_estimation:
+            H = np.block([np.eye(3), np.zeros((3,3))])
+        else:
+            H = np.eye(3)
+        S = H.dot(self.P).dot(H.T) + self.R
+        K = self.P.dot(H.T).dot(np.linalg.inv(S))
+        #Z = stat_test(Y, Yhat, S, 0.99)*(Y - Yhat)
+        Z = (Y - Yhat)
+        e = K.dot(Z)
+
+        self.pos2D = self.pos2D  + e[0:2]
+        self.att2D = self.att2D + e[2]
+        if self.bias_estimation:
+            self.bias = self.bias + e[3:6]
+
+        self.P = (np.eye(len(self.P)) - K.dot(H)).dot(self.P)
+        self.innovation = (Z, S)
+
+class Kalman_Mapper_CV2GPS_3D(Kalman_Mapper_CV2GPS):
     """
-    Prediction : GPS
-    Measurement : CV2 with 3D correction from GPS
+    Prediction : CV2
+    Measurement : GPS with 3D correction from GPS
     """   
     def process_position(self, new_data):
-        return self.mapdata.gps_pos + self.mapdata.attitude.apply(np.append(self.prev_pos2D + R(-self.prev_att2D).dot(self.trans), self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[2]), True)
+        return self.mapdata.gps_pos + self.mapdata.attitude.apply(np.append(self.pos2D, self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[2]), True)
     
     def process_attitude(self, new_data):
         ort = rotation_ort(self.mapdata.attitude,new_data.attitude)
-        return ort*rot.from_euler('zxy', [self.prev_att2D + self.rot, 0, 0]).inv()*self.mapdata.attitude
+        return ort*rot.from_euler('zxy', [self.att2D, 0, 0]).inv()*self.mapdata.attitude
     
-class Kalman_Mapper_GPSCV2_2D(Kalman_Mapper_GPSCV2):
+class Kalman_Mapper_CV2GPS_2D(Kalman_Mapper_CV2GPS):
     """
-    Prediction : GPS
-    Measurement : CV2 without 3D correction
+    Prediction : CV2
+    Measurement : GPS without 3D correction
     """
     def process_position(self, new_data):
-        return self.mapdata.gps_pos + self.mapdata.attitude.apply(np.append(self.prev_pos2D + R(-self.prev_att2D).dot(self.trans), 0), True)
+        return self.mapdata.gps_pos + self.mapdata.attitude.apply(np.append(self.pos2D, 0), True)
           
     def process_attitude(self, new_data):
-        return rot.from_euler('zxy', [self.prev_att2D + self.rot, 0, 0]).inv()*self.mapdata.attitude
+        return rot.from_euler('zxy', [self.att2D, 0, 0]).inv()*self.mapdata.attitude
 
+# =============================================================================
+# Kalman Localizer
+# =============================================================================
 
 class Kalman_Localizer(Kalman):
     

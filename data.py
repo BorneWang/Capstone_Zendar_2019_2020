@@ -1,7 +1,6 @@
-import shelve
 import numpy as np
-from os import path
 from PIL import Image
+from sqlitedict import SqliteDict
 from distutils.version import StrictVersion
 from scipy.spatial.transform import Rotation as rot
  
@@ -57,7 +56,7 @@ class RadarData:
         """ Return the translation and the rotation based on the two radar images """
         translation, rotation = None, None   
         if not (otherdata.id is None or self.id is None):
-            cv2_transformations = shelve.open("cv2_transformations", flag="r")
+            cv2_transformations = SqliteDict('cv2_transformations.db')
             if cv2_transformations['use_dataset'] in cv2_transformations:
                 if str(self.id)+"-"+str(otherdata.id) in cv2_transformations[cv2_transformations['use_dataset']]:
                     translation, rotation = cv2_transformations[cv2_transformations['use_dataset']][str(self.id)+"-"+str(otherdata.id)]
@@ -75,11 +74,12 @@ class RadarData:
                 # ECC
                 warp_mode = cv2.MOTION_EUCLIDEAN
                 number_of_iterations = 500;
-                termination_eps = 1e-7;
+                termination_eps = 1e-9;
                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
                 warp_matrix = np.eye(2, 3, dtype=np.float32)
+                #warp_matrix = np.concatenate((rotation_proj(otherdata.attitude, self.attitude).as_dcm()[0:2,0:2], np.expand_dims(self.earth2rbd(self.gps_pos - otherdata.gps_pos)[0:2]/self.precision, axis=0).T), axis=1).astype(np.float32)
                 (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
-    
+                print(cc)
                 rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
                 translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
                 rotation = rot.from_dcm(rot_matrix)
@@ -97,7 +97,7 @@ class RadarData:
                     rotation = np.nan
             
             if not (otherdata.id is None or self.id is None) and not np.any(np.isnan(translation)):      
-                cv2_transformations = shelve.open("cv2_transformations", writeback=True)
+                cv2_transformations = SqliteDict('cv2_transformations.db', autocommit=True)
                 if not cv2_transformations['use_dataset'] in cv2_transformations:
                     cv2_transformations[cv2_transformations['use_dataset']] = dict()
                 cv2_transformations[cv2_transformations['use_dataset']][str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
