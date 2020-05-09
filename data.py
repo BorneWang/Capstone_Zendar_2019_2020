@@ -8,7 +8,7 @@ import cv2
 if StrictVersion(cv2.__version__) < StrictVersion('4.2.0'):
     raise ImportError("cv2 version should be 4.2.0 or above")
 
-from utils import rotation_proj
+from utils import rotation_proj, ECC_estimation, feature_matching_estimation
 
 class RadarData:
     
@@ -72,35 +72,28 @@ class RadarData:
                 self_img, otherdata_img = self.image_overlap(otherdata)
                 
                 # ECC
-                warp_mode = cv2.MOTION_EUCLIDEAN
-                number_of_iterations = 500;
-                termination_eps = 1e-9;
-                criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-                warp_matrix = np.eye(2, 3, dtype=np.float32)
-                #warp_matrix = np.concatenate((rotation_proj(otherdata.attitude, self.attitude).as_dcm()[0:2,0:2], np.expand_dims(self.earth2rbd(self.gps_pos - otherdata.gps_pos)[0:2]/self.precision, axis=0).T), axis=1).astype(np.float32)
-                (cc, warp_matrix) = cv2.findTransformECC (otherdata_img, self_img, warp_matrix, warp_mode, criteria, None, 1)
-                print(cc)
+                cc, warp_matrix = ECC_estimation(otherdata_img, self_img)
+                # ORB
+                #warp_matrix = feature_matching_estimation(otherdata_img, self_img, "ORB")
+                # SIFT
+                #warp_matrix = feature_matching_estimation(otherdata_img, self_img, "SIFT")
+
                 rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
                 translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
                 rotation = rot.from_dcm(rot_matrix)
-            except:
-                try:
-                    # Without restrictind to image overlap
-                    (cc, warp_matrix) = cv2.findTransformECC (otherdata.img, self.img, warp_matrix, warp_mode, criteria, None, 1)
-    
-                    rot_matrix = np.array([[warp_matrix[0,0], warp_matrix[1,0], 0], [warp_matrix[0,1], warp_matrix[1,1], 0], [0,0,1]])
-                    translation = -self.precision*np.array([warp_matrix[0,2], warp_matrix[1,2], 0])
-                    rotation = rot.from_dcm(rot_matrix)
-                except:    
-                    print("CV2 calculation failed")
-                    translation = np.nan
-                    rotation = np.nan
+            except:   
+                print("CV2 calculation failed")
+                translation = np.nan
+                rotation = np.nan
             
-            if not (otherdata.id is None or self.id is None) and not np.any(np.isnan(translation)):      
+            if not (otherdata.id is None or self.id is None) and not np.any(np.isnan(translation)): 
                 cv2_transformations = SqliteDict('cv2_transformations.db', autocommit=True)
                 if not cv2_transformations['use_dataset'] in cv2_transformations:
-                    cv2_transformations[cv2_transformations['use_dataset']] = dict()
-                cv2_transformations[cv2_transformations['use_dataset']][str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
+                    d = dict()
+                else:
+                    d = cv2_transformations[cv2_transformations['use_dataset']]
+                d[str(self.id)+"-"+str(otherdata.id)] = (translation, rotation)
+                cv2_transformations[cv2_transformations['use_dataset']] = d
                 cv2_transformations.close()  
             
         # just for test and vizualisation, could be removed()

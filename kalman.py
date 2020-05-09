@@ -33,9 +33,9 @@ class Kalman:
     def init_default_covariance(self):
         """ Initialize the covariances with default values """
         self.Q = np.block([[np.array([[0.00051736, -0.00091164],[-0.00091164,  0.00519678]]), np.zeros((2,1))],[np.zeros(2), 3.54317141e-06]])  # determined from reader.plot_gps_evaluation
-        self.R = np.diag([0.01**2, 0.01**2, np.deg2rad(0.1)**2])
+        self.R = np.diag([0.01**2, 0.01**2, np.deg2rad(0.01)**2])    # To tune when knowing the exact distribution of GPS measurements
         if self.bias_estimation:
-            self.P = np.block([[self.R, np.zeros((3,3))],[np.zeros((3,3)),np.diag([0.01**2, 0.01**2, np.deg2rad(0.001)**2])]])
+            self.P = np.block([[self.R, np.zeros((3,3))],[np.zeros((3,3)),self.R]])
         else:
             self.P = deepcopy(self.R)
                 
@@ -100,20 +100,18 @@ class Kalman_Mapper_CV2GPS(Kalman):
         
         R = np.array([[np.cos(self.att2D), -np.sin(self.att2D)],[np.sin(self.att2D), np.cos(self.att2D)]])
         if not np.any(np.isnan(trans)):
-            self.pos2D = self.pos2D + R.dot(trans[0:2] + self.bias[0:2])
-            self.att2D = self.att2D + rotation.as_euler('zxy')[0] + self.bias[2]
+            self.pos2D = self.pos2D + R.dot(trans[0:2] - self.bias[0:2])
+            self.att2D = self.att2D + rotation.as_euler('zxy')[0] - self.bias[2]
         else:
             self.pos2D = self.mapdata.attitude.apply(new_data.gps_pos - self.mapdata.gps_pos)[0:2]
             self.att2D = rotation_proj(self.mapdata.attitude, new_data.attitude).as_euler("zxy")[0]
         
-        F = np.array([[1, 0, -np.sin(self.att2D)*trans[0]-np.cos(self.att2D)*trans[1]],
-                      [0, 1, np.cos(self.att2D)*trans[0]-np.sin(self.att2D)*trans[1]],
+        F = np.array([[1, 0, -np.sin(self.att2D)*(trans[0] - self.bias[0])-np.cos(self.att2D)*(trans[1] - self.bias[1])],
+                      [0, 1, np.cos(self.att2D)*(trans[0] - self.bias[0])-np.sin(self.att2D)*(trans[1] - self.bias[1])],
                       [0, 0, 1]])
-        M = np.array([[np.cos(self.att2D), -np.sin(self.att2D), 0],
-                      [np.sin(self.att2D), np.cos(self.att2D), 0],
-                      [0, 0, 1]])
+        M = np.block([[R, np.zeros((2,1))],[np.zeros(2), 1]])
         if self.bias_estimation:
-            F = np.block([[F, np.block([[R, np.zeros((2,1))],[np.zeros(2), 1]])],[np.zeros((3,3)), np.eye(3)]])
+            F = np.block([[F, np.block([[-R, np.zeros((2,1))],[np.zeros(2), -1]])],[np.zeros((3,3)), np.eye(3)]])
             M = np.block([[M], [np.zeros((3,3))]])
             self.P = F.dot(self.P).dot(F.T) + M.dot(self.Q).dot(M.T)
         else:
@@ -176,12 +174,7 @@ class Kalman_Localizer(Kalman):
     def __init__(self, mapping = False, name = None):          
         super().__init__(mapping, name)
         self.mapdata = Map(name)
-    
-    def set_covariances(self, gps_pos_std, gps_att_std, cv2_trans_std, cv2_rot_std):
-        """ Set covariances Q and R of the Kalman Filter """
-        self.Q = np.block([[np.zeros((3,3)), np.zeros((3,3))],[ np.zeros((3,3)), np.diag([gps_pos_std**2, gps_pos_std**2, gps_att_std**2])]])
-        self.R = np.diag([cv2_trans_std**2, cv2_trans_std**2, cv2_rot_std**2])
-           
+     
     def set_initial_position(self, gps_pos, attitude):
         """ Initialize the position of the car as a first guess """
         self.position, self.attitude = projection(self.mapdata.gps_pos, self.mapdata.attitude, gps_pos, attitude)

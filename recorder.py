@@ -10,50 +10,81 @@ import matplotlib.animation as animation
 from scipy.spatial.transform import Rotation as rot
 
 from utils import rotation_proj, rotation_ort, ecef2enu, ecef2lla, rbd_translate, stat_filter, increase_saturation, projection
+    
+def is_reader(obj):
+    if type(obj).__name__ =="Reader":
+        return True
+    else:
+        return False
 
 def define_reader(obj):
-    if type(obj).__name__ =="Reader":
+    if is_reader(obj):
         return obj
     else:
         return obj.reader
 
-def get_plot_origin(obj):
+def get_origin(obj, projection, car_position):
+    """ Return origin of frame according to given projection convention """ 
+    if not(projection=="ENU" or projection=="Map"):
+        raise Exception("Only projection in 'Map' frame or 'ENU' frame are available")
     reader = define_reader(obj)
-    if hasattr(reader,"groundtruth"):
-        pos0 = rbd_translate(reader.get_groundtruth_pos(0), reader.get_groundtruth_att(0), reader.tracklog_translation)
-        coord0 = ecef2lla(pos0)
-        att0 = ecef2enu(coord0[1], coord0[0])
-    else:
-        pos0 = rbd_translate(reader.get_gps_pos(0), reader.get_gps_att(0), reader.tracklog_translation)
-        coord0 = ecef2lla(pos0)
-        att0 = ecef2enu(coord0[1], coord0[0])
-    return pos0, att0
+    if projection=="ENU":
+        if car_position is None:
+            car_position = True
+        if is_reader(obj):
+            if hasattr(reader,"groundtruth"):
+                pos0 = rbd_translate(reader.get_groundtruth_pos(0), reader.get_groundtruth_att(0), car_position*reader.tracklog_translation)
+                coord0 = ecef2lla(pos0)
+                att0 = ecef2enu(coord0[1], coord0[0])
+            else:
+                pos0 = rbd_translate(reader.get_gps_pos(0), reader.get_gps_att(0), car_position*reader.tracklog_translation)
+                coord0 = ecef2lla(pos0)
+                att0 = ecef2enu(coord0[1], coord0[0])
+        else:
+            pos0 = rbd_translate(obj.get_positions(0), obj.get_attitudes(0), car_position*reader.tracklog_translation)
+            coord0 = ecef2lla(pos0)
+            att0 = ecef2enu(coord0[1], coord0[0])
+    elif projection=="Map":
+        if car_position is None:
+            car_position = False
+        q = rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]])
+        if is_reader(obj):
+            if hasattr(reader,"groundtruth"):
+                pos0 = rbd_translate(reader.get_groundtruth_pos(0), reader.get_groundtruth_att(0), car_position*reader.tracklog_translation)
+                att0 = q*reader.get_groundtruth_att(0)
+            else:
+                pos0 = rbd_translate(reader.get_gps_pos(0), reader.get_gps_att(0), car_position*reader.tracklog_translation)
+                att0 = q*reader.get_gps_att(0)
+        else:          
+            pos0 = rbd_translate(obj.kalman.mapdata.gps_pos, obj.kalman.mapdata.attitude, car_position*reader.tracklog_translation)
+            att0 = q*obj.kalman.mapdata.attitude
+    return (pos0, att0), car_position
 
-def add_trajectory_line(obj, gps_pos, attitudes, label, color, arrow):
-    """ Add a trajectory in an oriented 2D map """
-    reader = define_reader(obj)
-    map_origin, map_orientation = get_plot_origin(obj)
-    pos = rbd_translate(gps_pos, attitudes, reader.tracklog_translation)
-    trajectory = map_orientation.apply(pos - map_origin)       
+def add_trajectory_line(origin, gps_pos, attitudes, tracklog_translation, label, color, arrow):
+    """ Add a trajectory in current plot projected in the 2D plane described by the origin"""
+    map_origin, map_orientation = origin
+    gps_pos = rbd_translate(gps_pos, attitudes, tracklog_translation)
+    trajectory = map_orientation.apply(gps_pos - map_origin)       
     plt.plot(trajectory[:,0], trajectory[:,1], color, label=label, picker=True)
     if arrow:
-        arrows = np.array([map_orientation.apply(data.earth2rbd([0,-1,0], True)) for data in reader.get_radardata()])
+        arrows = np.array([map_orientation.apply(att.apply([0,-1,0], True)) for att in attitudes])
         for i in range(0, len(arrows), 5):
             plt.arrow(trajectory[i,0], trajectory[i,1],arrows[i,0],arrows[i,1])
 
-def add_altitude_line(obj, gps_pos, attitudes, label, color):
-    """ Add a line in figure of altitude from a 2D plane"""
-    reader = define_reader(obj)
-    map_origin, map_orientation = get_plot_origin(obj)
-    pos = rbd_translate(gps_pos, attitudes, reader.tracklog_translation)
-    trajectory = map_orientation.apply(pos - map_origin)       
-    plt.plot(obj.get_timestamps(), trajectory[:,2], color, label=label)
+def add_altitude_line(origin, gps_pos, attitudes, t, tracklog_translation, label, color):
+    """ Add a altitude line in current plot projected in the 2D plane described by the origin"""
+    map_origin, map_orientation = origin
+    gps_pos = rbd_translate(gps_pos, attitudes, tracklog_translation)
+    trajectory = map_orientation.apply(gps_pos - map_origin)       
+    plt.plot(t, trajectory[:,2], color, label=label)
+
 
 class Plot_Handler:
-               
-    def export_map(self, gps_only = False, cv2_corrected=False):
+        
+    def export_map(self, cv2 = False, cv2_corrected=False):
         """ Plot reference GPS on a Google map as well as measured position and filtered position
-            corrected: if True apply bias correction to CV2 measurements
+            cv2: if True plot CV2 measurements integrated alone
+            cv2_corrected: if True plot CV2 measurements with bias and altitude correction
         """
         print("Exporting Google map...")
         reader = define_reader(self)
@@ -67,96 +98,104 @@ class Plot_Handler:
             gmap=gmplot.GoogleMapPlotter(np.mean(coords[:,1]), np.mean(coords[:,0]), 15)
         gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'green', edge_width = 2.5)
         
-        if not gps_only:           
+        if cv2:           
             coords = ecef2lla(rbd_translate(self.get_measured_positions(), self.get_measured_attitudes(), reader.tracklog_translation))
             gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'red', edge_width = 2.5)
 
-        if not gps_only and cv2_corrected:
+        if cv2_corrected:
             coords = ecef2lla(rbd_translate(self.get_measured_positions(corrected=cv2_corrected), self.get_measured_attitudes(corrected=cv2_corrected), reader.tracklog_translation))
             gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'red', edge_width = 2.5)
             
-        if hasattr(self,"get_position") and len(self.get_position())!=0:
-            coords = ecef2lla(rbd_translate(self.get_position(), self.get_attitude(), self.reader.tracklog_translation))
+        if not is_reader(self) and len(self.get_positions())!=0:
+            coords = ecef2lla(rbd_translate(self.get_positions(), self.get_attitudes(), self.reader.tracklog_translation))
             gmap.plot(np.rad2deg(coords[:,1]), np.rad2deg(coords[:,0]), 'cornflowerblue', edge_width = 2.5)
 
         gmap.apikey = "AIzaSyB0UlIEiFl6IFtzz2_1WaDyYsXjscLVRWU"
         gmap.draw("map.html")  
          
-    def plot_trajectory(self, arrow=False, gps_only = False, cv2_corrected = False):
-        """ Plot the trajectory in ENU frame centered on initial position 
+    def plot_trajectory(self, arrow=False, cv2 = False, cv2_corrected = False, projection="ENU", car_position=None):
+        """ Plot the trajectory in ENU frame (by default) centered on initial position 
             arrow: if True plot arrows in order to visualize attitude
-            gps_only: if True plot only GPS data from dataset
-            cv2_corrected: if True add a trajectory with bias correction on CV2 measurements
+            cv2: if True plot CV2 measurements integrated alone
+            cv2_corrected: if True plot CV2 measurements with bias and altitude correction
+            projection: projection in given 2D plane
+            car_position: calculate position of the car if True, if False use position of top-left corner, if not given choose the most appropriate
         """
+        origin, car_position = get_origin(self, projection, car_position)
+        
         fig = plt.figure()
         reader = define_reader(self)
-          
         if hasattr(reader,"groundtruth"):
-            add_trajectory_line(self, reader.get_groundtruth_pos(), reader.get_groundtruth_att(), "Groundtruth", 'black', arrow)   
-        add_trajectory_line(self, reader.get_gps_pos(), reader.get_gps_att(), "GPS", 'g', arrow)
+            add_trajectory_line(origin, reader.get_groundtruth_pos(), reader.get_groundtruth_att(), car_position*reader.tracklog_translation, "Groundtruth", 'black', arrow)   
+        add_trajectory_line(origin, reader.get_gps_pos(), reader.get_gps_att(), car_position*reader.tracklog_translation, "GPS", 'g', arrow)
         
-        if not gps_only:
-            add_trajectory_line(self, self.get_measured_positions(), self.get_measured_attitudes(), "CV2", 'r', arrow)  
-        if cv2_corrected and not gps_only:
-            add_trajectory_line(self, self.get_measured_positions(corrected=cv2_corrected), self.get_measured_attitudes(corrected=cv2_corrected), "CV2 corrected", 'r--', arrow)
+        if cv2:
+            add_trajectory_line(origin, self.get_measured_positions(), self.get_measured_attitudes(), car_position*reader.tracklog_translation, "CV2", 'r', arrow)  
+        if cv2_corrected:
+            add_trajectory_line(origin, self.get_measured_positions(corrected=cv2_corrected), self.get_measured_attitudes(corrected=cv2_corrected), car_position*reader.tracklog_translation, "CV2 corrected", 'r--', arrow)
 
-        if hasattr(self,"get_position") and len(self.get_position())!=0:
-            add_trajectory_line(self, self.get_position(), self.get_attitude(), "Output", 'cornflowerblue', arrow)
+        if not is_reader(self) and len(self.get_positions())!=0:
+            add_trajectory_line(origin, self.get_positions(), self.get_attitudes(), car_position*reader.tracklog_translation, "Output", 'cornflowerblue', arrow)
 
         plt.xlabel('x (meters)')
         plt.ylabel('y (meters)')
         plt.axis('equal')
         plt.legend()
-        plt.title("Trajectory in ENU frame centered on initial position")
+        plt.title("Trajectory " + car_position*"of the car"+" in "+projection+" frame "+(is_reader(self))*"centered on initial position")
         
         def show_timestamp(event):
             print(str(round(reader.get_timestamps()[event.ind[0]],2))+"s")
         fig.canvas.mpl_connect('pick_event', show_timestamp) 
         
-    def plot_altitude(self, gps_only = False, cv2_corrected = False):
+    def plot_altitude(self, cv2 = False, cv2_corrected = False, projection="ENU", car_position=None):
         """ Plot the altitude in ENU frame centered on initial position 
-            gps_only: if True plot only GPS data from dataset
-            cv2_corrected: if True add a line with bias correction on CV2 measurements
+            cv2: if True plot CV2 measurements integrated alone
+            cv2_corrected: if True plot CV2 measurements with bias and altitude correction
+            projection: projection in given 2D plane
+            car_position: calculate position of the car if True, if False use position of top-left corner, if not given choose the most appropriate
         """
+        origin, car_position = get_origin(self, projection, car_position)
+        
         plt.figure()
         reader = define_reader(self)
-        
         if hasattr(reader,"groundtruth"):
-            add_altitude_line(self, reader.get_groundtruth_pos(), reader.get_groundtruth_att(), "Groundtruth", 'black')   
-        add_altitude_line(self, reader.get_gps_pos(), reader.get_gps_att(), "GPS", 'g')
+            add_altitude_line(origin, reader.get_groundtruth_pos(), reader.get_groundtruth_att(), self.get_timestamps(), car_position*reader.tracklog_translation, "Groundtruth", 'black')   
+        add_altitude_line(origin, reader.get_gps_pos(), reader.get_gps_att(), self.get_timestamps(), car_position*reader.tracklog_translation, "GPS", 'g')
      
-        if not gps_only:
-            add_altitude_line(self, self.get_measured_positions(), self.get_measured_attitudes(), "CV2", 'r')  
-        if cv2_corrected and not gps_only:
-            add_altitude_line(self, self.get_measured_positions(corrected=cv2_corrected), self.get_measured_attitudes(corrected=cv2_corrected), "CV2 corrected", 'r--')
+        if cv2:
+            add_altitude_line(origin, self.get_measured_positions(), self.get_measured_attitudes(), self.get_timestamps(), car_position*reader.tracklog_translation, "CV2", 'r')  
+        if cv2_corrected:
+            add_altitude_line(origin, self.get_measured_positions(corrected=cv2_corrected), self.get_measured_attitudes(corrected=cv2_corrected), self.get_timestamps(), car_position*reader.tracklog_translation,"CV2 corrected", 'r--')
    
-        if hasattr(self,"get_position") and len(self.get_position())!=0:
-            add_altitude_line(self, self.get_position(), self.get_attitude(), "Output", 'cornflowerblue')
+        if not is_reader(self) and len(self.get_positions())!=0:
+            add_altitude_line(origin, self.get_positions(), self.get_attitudes(), self.get_timestamps(),car_position*reader.tracklog_translation, "Output", 'cornflowerblue')
 
         plt.xlabel('Times (s)')
         plt.ylabel('z (meters)')
         plt.legend()
-        plt.title("Altitude in ENU frame centered on initial position")
+        plt.title("Altitude "+ car_position*"of the car"+" in "+projection+" frame "+(is_reader(self))*"centered on initial position")
 
-    def plot_attitude(self, gps_only = False, cv2_corrected = False):
+    def plot_attitude(self, cv2 = False, cv2_corrected = False, projection="ENU", car_position=None):
         """ Plot the orientation in the map frame given by the GPS and after fusion 
-            gps_only: if True plot only GPS data from dataset
-            cv2_corrected: if True add a line with bias correction on CV2 measurements
+            cv2: if True plot CV2 measurements integrated alone
+            cv2_corrected: if True plot CV2 measurements with bias and altitude correction
+            projection: projection in given 2D plane
+            car_position: calculate position of the car if True, if False use position of top-left corner, if not given choose the most appropriate
         """
+        (pos0, att0), _ = get_origin(self, projection, car_position)
+        
         plt.figure()
         reader = define_reader(self)
-        pos0, att0 = get_plot_origin(self)
         q = rot.from_dcm([[0,-1,0],[-1,0,0],[0,0,-1]])
-
         if hasattr(reader,"groundtruth"):
             plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_groundtruth_att()]), 'black', label="Groundtruth")
         plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in reader.get_gps_att()]), 'green', label="GPS")
-        if not gps_only:            
+        if cv2:            
             plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes()]), 'red', label="CV2")
-        if cv2_corrected and not gps_only:
+        if cv2_corrected:
             plt.plot(reader.get_timestamps(), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_measured_attitudes(cv2_corrected)]), 'r--', label="CV2 corrected")
-        if hasattr(self,"get_attitude") and len(self.get_attitude())!=0:
-            plt.plot(self.get_timestamps(0, np.inf), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_attitude()]), 'cornflowerblue', label="Output")
+        if not is_reader(self) and len(self.get_attitudes())!=0:
+            plt.plot(self.get_timestamps(0, np.inf), np.unwrap([rotation_proj(att0, q*r).as_euler('zxy')[0] for r in self.get_attitudes()]), 'cornflowerblue', label="Output")
         
         plt.legend()
         plt.title("Yaw")
@@ -239,6 +278,7 @@ class Recorder(Plot_Handler):
                 lines = ax.get_lines()
                 for i in range(0, len(lines)):
                     ax.plot(self.get_timestamps(0, np.inf), np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(i)),'--', color=lines[i].get_color())
+                    ax.plot(self.get_timestamps(0, np.inf), -np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(i)),'--', color=lines[i].get_color())
         
         plt.figure()
         ax = plt.axes()
@@ -253,8 +293,8 @@ class Recorder(Plot_Handler):
             print("Average rotation error (deg): " + str(np.round(np.rad2deg(np.mean(stat_filter(error_att, 0.9))), 5)) + " (" +str(np.round(np.rad2deg(np.std(error_att)), 5))+ ")")
             if covariances:
                 lines = ax.get_lines()
-                for i in range(0, len(lines)):
-                    ax.plot(self.get_timestamps(0, np.inf), np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(2)),'--', color=lines[i].get_color())
+                ax.plot(self.get_timestamps(0, np.inf), np.rad2deg(np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(2))),'--', color=lines[0].get_color())
+                ax.plot(self.get_timestamps(0, np.inf), np.rad2deg(-np.sqrt(stat.chi2.ppf(0.99, df=1)*self.get_covariances(2))),'--', color=lines[0].get_color())
     
     def get_kalman_error(self, t_ini=None, t_final=None, use_groundtruth = True):
         """ Return error of the Kalman in filter in the map frame 
@@ -263,18 +303,18 @@ class Recorder(Plot_Handler):
         times = self.get_timestamps(t_ini, t_final)
         if not t_ini is None and t_final is None:
             if hasattr(self.reader,"groundtruth") and use_groundtruth:
-                error_pos = self.kalman.mapdata.attitude.apply(self.get_position(times)-self.reader.get_groundtruth_pos(times))[0:2]
-                error_att = rotation_proj(self.reader.get_groundtruth_att(times), self.get_attitude(times)).as_euler('zxy')[0]
+                error_pos = self.kalman.mapdata.attitude.apply(self.get_positions(times)-self.reader.get_groundtruth_pos(times))[0:2]
+                error_att = rotation_proj(self.reader.get_groundtruth_att(times), self.get_attitudes(times)).as_euler('zxy')[0]
             else:    
-                error_pos = self.kalman.mapdata.attitude.apply(self.get_position(times)-self.reader.get_gps_pos(times))[0:2]
-                error_att = rotation_proj(self.reader.get_gps_att(times), self.get_attitude(times)).as_euler('zxy')[0]
+                error_pos = self.kalman.mapdata.attitude.apply(self.get_positions(times)-self.reader.get_gps_pos(times))[0:2]
+                error_att = rotation_proj(self.reader.get_gps_att(times), self.get_attitudes(times)).as_euler('zxy')[0]
         else:
             if hasattr(self.reader,"groundtruth") and use_groundtruth:
-                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_groundtruth_pos(ts))[0:2] for ts in times])
-                error_att = np.array([rotation_proj(self.reader.get_groundtruth_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in times])
+                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_positions(ts)-self.reader.get_groundtruth_pos(ts))[0:2] for ts in times])
+                error_att = np.array([rotation_proj(self.reader.get_groundtruth_att(ts), self.get_attitudes(ts)).as_euler('zxy')[0] for ts in times])
             else:    
-                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_position(ts)-self.reader.get_gps_pos(ts))[0:2] for ts in times])  
-                error_att = np.array([rotation_proj(self.reader.get_gps_att(ts), self.get_attitude(ts)).as_euler('zxy')[0] for ts in times])
+                error_pos = np.array([self.kalman.mapdata.attitude.apply(self.get_positions(ts)-self.reader.get_gps_pos(ts))[0:2] for ts in times])  
+                error_att = np.array([rotation_proj(self.reader.get_gps_att(ts), self.get_attitudes(ts)).as_euler('zxy')[0] for ts in times])
         return error_pos, error_att  
 
     def get_timestamps(self, t_ini=None, t_final=None):
@@ -294,16 +334,16 @@ class Recorder(Plot_Handler):
                     raise ValueError("Initial timestamp should be smaller than final timestamp")
                 return [t for t in times if t>=t_ini and t<=t_final]
 
-    def get_position(self, t_ini=None, t_final=None):
-        """ Return positions after fusion """
+    def get_positions(self, t_ini=None, t_final=None):
+        """ Return positions calculated by the Kalman Filter """
         times = self.get_timestamps(t_ini, t_final)
         if not t_ini is None and t_final is None:
             return self.kalman_record[times]['POSITION'] 
         else:
             return np.array([self.kalman_record[t]['POSITION'] for t in times])
 
-    def get_attitude(self, t_ini=None, t_final=None):
-        """ Return attitude after fusion """
+    def get_attitudes(self, t_ini=None, t_final=None):
+        """ Return attitude calculated by the Kalman Filter """
         times = self.get_timestamps(t_ini, t_final)
         if not t_ini is None and t_final is None:
             return self.kalman_record[times]['ATTITUDE'] 
@@ -311,7 +351,10 @@ class Recorder(Plot_Handler):
             return [self.kalman_record[t]['ATTITUDE'] for t in times]
 
     def get_measurements(self, corrected=False, use_groundtruth = True):
-        """ Return positions and attitude obtained with cv2 transformations """
+        """ Return positions and attitude obtained with cv2 transformations 
+            corrected: correct the CV2 measurements from their bias and perform altitude correction
+            use_groundtruth: if True and available, use groundtruth information as starting point
+        """
         if hasattr(self.reader,"groundtruth") and use_groundtruth:
             measured_pos = [self.reader.get_groundtruth_pos(0)]
             measured_att = [self.reader.get_groundtruth_att(0)]
@@ -345,21 +388,21 @@ class Recorder(Plot_Handler):
 
     def get_measured_attitudes(self, corrected=False, use_groundtruth=True):
         """ Return attitudes obtained with cv2 transformations """
-        if (not corrected and self.measured_att is None) or (corrected and self.measured_att_corr is None):
-            return self.get_measurements(corrected, use_groundtruth)[1]
-        elif corrected:
-            return self.measured_att_corr
-        else:           
+        if not corrected and not self.measured_att is None:
             return self.measured_att
+        elif corrected and not self.measured_att_corr is None:
+            return self.measured_att_corr
+        else:
+            return self.get_measurements(corrected, use_groundtruth)[1]
     
     def get_measured_positions(self, corrected=False, use_groundtruth=True):
         """ Return positions obtained with cv2 transformations """
-        if (not corrected and self.measured_pos is None) or (corrected and self.measured_pos_corr is None):
-            return self.get_measurements(corrected, use_groundtruth)[0]
-        elif corrected:
-            return self.measured_pos_corr
-        else:           
+        if not corrected and not self.measured_pos is None:
             return self.measured_pos
+        elif corrected and not self.measured_pos_corr is None:
+            return self.measured_pos_corr
+        else:
+            return self.get_measurements(corrected, use_groundtruth)[0]
         
     def get_covariances(self, state, t_ini=None, t_final=None):
         """ Return covariance for given state """
@@ -370,7 +413,7 @@ class Recorder(Plot_Handler):
             return np.array([self.kalman_record[t]['COVARIANCE'][state, state] for t in times])
         
     def get_bias(self, t_ini=None, t_final=None):
-        """ Return covariance for given state """
+        """ Return bias measured during Kalman Filtering """
         times = self.get_timestamps(t_ini, t_final)
         if not t_ini is None and t_final is None:
             return self.kalman_record[times]['BIAS']
@@ -424,11 +467,11 @@ class Recorder(Plot_Handler):
         
         def process_images(t):
             center = -self.kalman.mapdata.precision*np.array([0.5*shape[1], 0.5*shape[0],0])
-            gps_pos = projection(self.kalman.mapdata.gps_pos, self.kalman.mapdata.attitude, rbd_translate(self.get_position(t), self.get_attitude(t), self.reader.tracklog_translation))
+            gps_pos = projection(self.kalman.mapdata.gps_pos, self.kalman.mapdata.attitude, rbd_translate(self.get_positions(t), self.get_attitudes(t), self.reader.tracklog_translation))
             img, _= self.kalman.mapdata.extract_from_map(gps_pos + self.kalman.mapdata.attitude.apply(center,True), self.kalman.mapdata.attitude, shape)
 
             data = deepcopy(self.reader.get_radardata(t))
-            data.gps_pos, data.attitude = self.get_position(t), self.get_attitude(t)
+            data.gps_pos, data.attitude = self.get_positions(t), self.get_attitudes(t)
             img_border = 255*np.ones(np.shape(data.img))
             img_border[border:-border,border:-border] = data.img[border:-border,border:-border]
             data.img = img_border

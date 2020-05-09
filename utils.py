@@ -12,6 +12,47 @@ from sklearn.cluster import DBSCAN
 from pykml.factory import KML_ElementMaker as kml
 from scipy.spatial.transform import Rotation as rot
 
+def ECC_estimation(img1, img2):
+    """ Estimate the affine transformation from img1 to img2 with ECC"""
+    warp_mode = cv2.MOTION_EUCLIDEAN
+    number_of_iterations = 500;
+    termination_eps = 1e-7;
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
+    
+    warp_matrix = np.eye(2, 3, dtype=np.float32)
+    (cc, warp_matrix) = cv2.findTransformECC (img1, img2, warp_matrix, warp_mode, criteria, None, 1)
+    return cc, warp_matrix
+
+def feature_matching_estimation(img1, img2, algorithm="ORB"):
+    """ Estimate the affine transformation from img1 to img2 with feature matching algorithms"""
+    if not(algorithm=="ORB" or algorithm=="SIFT"):
+        raise Exception("Only ORB and SIFT feature matching algorithm can be use")
+    
+    MAX_FEATURES = 500
+    
+    if algorithm=="ORB":
+        orb = cv2.ORB_create(MAX_FEATURES)
+        keypoints1, descriptors1 = orb.detectAndCompute(img1, None)
+        keypoints2, descriptors2 = orb.detectAndCompute(img2, None)
+    elif algorithm=="SIFT":
+        sift = cv2.xfeatures2d.SIFT_create()
+        keypoints1, descriptors1 = sift.detectAndCompute(img1, None)
+        keypoints2, descriptors2 = sift.detectAndCompute(img2, None)
+        
+    bf = cv2.BFMatcher()
+    matches = bf.knnMatch(descriptors1, descriptors2, k=2)
+    good = []
+    for m,n in matches:
+        if m.distance < 0.7*n.distance:
+            good.append(m)
+    
+    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good]).reshape(-1,1,2)
+    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good]).reshape(-1,1,2)
+
+    warp_matrix, mask = cv2.estimateAffine2D(src_pts, dst_pts, cv2.RANSAC, ransacReprojThreshold=5.0)
+    scale = np.sqrt(np.linalg.det(warp_matrix[0:2,0:2]))
+    return np.concatenate((warp_matrix[0:2,0:2]/ scale, warp_matrix[2,:]), axis=1).astype(np.float32)
+
 def projection(position_ref, attitude_ref, pos, att=None):
     """ Project in a plane defined by attitude_ref and position_ref """
     trans = attitude_ref.apply(pos-position_ref)

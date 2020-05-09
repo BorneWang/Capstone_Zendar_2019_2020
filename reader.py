@@ -1,6 +1,5 @@
 import os
 import h5py
-import shelve
 import numpy as np
 from PIL import Image
 from copy import deepcopy
@@ -25,11 +24,14 @@ class Reader(Plot_Handler):
         self.tracklog_translation = np.zeros(3)
         self.bias = None
         
-        self.load_heatmaps(t_ini, t_final)
+        self.gps_trans = None
+        self.gps_rot = None
+        self.cv2_trans = None
+        self.cv2_rot = None
+        self.groundtruth_trans = None
+        self.groundtruth_rot = None
         
-        cv2_transformations = SqliteDict('cv2_transformations.db', autocommit=True)
-        cv2_transformations['use_dataset'] = self.src
-        cv2_transformations.close()
+        self.load_heatmaps(t_ini, t_final)
     
     def __iter__(self):
         self.iter = 0
@@ -56,6 +58,10 @@ class Reader(Plot_Handler):
     def load_heatmaps(self, t_ini=0, t_final=np.inf):
         """ Function load radar data magnitude from HDF5 between t_ini and t_final"""
         hdf5 = h5py.File(self.src,'r+')
+        
+        cv2_transformations = SqliteDict('cv2_transformations.db', autocommit=True)
+        cv2_transformations['use_dataset'] = self.src
+        cv2_transformations.close()
         
         try:
             aperture = hdf5['radar']['broad01']['aperture2D']
@@ -118,40 +124,6 @@ class Reader(Plot_Handler):
         except:  
             hdf5.close()
             raise Exception("A problem occured when importing data")           
-        
-    def play_video(self, t_ini=0, t_final=np.inf, grayscale = True, save=False):
-        """ Play a video of radar images between t_ini and t_final
-            grayscale: if False automatic coloration of images is used
-            save: if True, save the video as a .mp4
-        """
-        # Handling pause/resume event when clicking on the video
-        anim_running = True
-        def onClick(event):
-            nonlocal anim_running
-            if anim_running:
-                ani.event_source.stop()
-                anim_running = False
-            else:
-                ani.event_source.start()
-                anim_running = True
-                    
-        times = self.get_timestamps(t_ini, t_final)
-        images = []       
-        fig = plt.figure()
-        print("Creating video...")
-        for t in times:
-            plt.axis('off')
-            if grayscale:              
-                images.append([plt.imshow(Image.fromarray(self.heatmaps[t].img), cmap='gray', vmin=0, vmax=255), plt.text(0.5,0.5,str(round(t,2)))])
-            else:
-                images.append([plt.imshow(Image.fromarray(self.heatmaps[t].img)), plt.text(0.6,0.5,str(round(t,2)))])
-        fig.canvas.mpl_connect('button_press_event', onClick)
-        ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
-        if save:
-            print("Saving video: "+str(self.src) + '.mp4')
-            os.makedirs(os.path.dirname('Videos/' + str(self.src) + '.mp4'), exist_ok=True)
-            ani.save('Videos/' + str(self.src) + '.mp4')
-        return ani
     
     def plot_evaluation(self, corrected = False, grouped = True):
         """ Evaluate the transformation given in GPS data information compared to CV2 image analysis
@@ -159,41 +131,18 @@ class Reader(Plot_Handler):
             grouped: if True return norm of error instead of error of each component
         """ 
         times = self.get_timestamps(0, np.inf)
+        trans_cv2, rot_cv2 = self.get_cv2_measurements()
+        trans_gps, rot_gps = self.get_gps_measurements()
         if hasattr(self,"groundtruth"):
-            pos_error_gps = np.zeros((len(times)-1,3))
-            pos_error_cv2 = np.zeros((len(times)-1,3))
-            att_error_gps = np.zeros(len(times)-1)
-            att_error_cv2 = np.zeros(len(times)-1)
-        else:         
-            pos_error = np.zeros((len(times)-1,3))
-            att_error = np.zeros(len(times)-1)
-            
-        for i in range(1,len(times)):           
-            trans_cv, rotation_cv = self.heatmaps[times[i]].image_transformation_from(self.heatmaps[times[i-1]])
-            theta_cv = rotation_cv.as_euler('zxy')[0]
-            
-            theta_gps = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
-            trans_gps = self.heatmaps[times[i]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))
-            
-            if hasattr(self,"groundtruth"):
-                theta_gt = rotation_proj(self.get_groundtruth_att(times[i-1]), self.get_groundtruth_att(times[i])).as_euler('zxy')[0]
-                trans_gt = self.get_groundtruth_att(times[i]).apply(self.get_groundtruth_pos(times[i]) - self.get_groundtruth_pos(times[i-1]))                
-                pos_error_gps[i-1] = trans_gt - trans_gps
-                att_error_gps[i-1] = theta_gt - theta_gps
-                if corrected:   
-                    pos_error_cv2[i-1] = trans_gt - (trans_cv + self.get_bias()[0])
-                    att_error_cv2[i-1] = theta_gt - (theta_cv + self.get_bias()[1].as_euler('zxy')[0])
-                else:
-                    pos_error_cv2[i-1] = trans_gt - trans_cv
-                    att_error_cv2[i-1] = theta_gt - theta_cv
-            else:     
-                if corrected:   
-                    pos_error[i-1] = trans_gps - (trans_cv + self.get_bias()[0])
-                    att_error[i-1] = theta_gps - (theta_cv + self.get_bias()[1].as_euler('zxy')[0])
-                else:
-                    pos_error[i-1] = trans_gt - trans_cv
-                    att_error[i-1] = theta_gps - theta_cv
-                    
+            trans_gt, rot_gt = self.get_groundtruth_measurements() 
+            pos_error_gps = trans_gps - trans_gt
+            att_error_gps = rot_gps - rot_gt
+            pos_error_cv2 = (trans_cv2 - corrected*self.get_bias()[0][0:2]) - trans_gt
+            att_error_cv2 = (rot_cv2 - corrected*self.get_bias()[1].as_euler('zxy')[0]) - rot_gt
+        else:
+            pos_error = (trans_cv2 - corrected*self.get_bias()[0][0:2]) - trans_gps
+            att_error = (rot_cv2 - corrected*self.get_bias()[1].as_euler('zxy')[0]) - rot_gps
+
         if grouped:  
             plt.figure()
             plt.xlabel("Time (s)")
@@ -207,7 +156,7 @@ class Reader(Plot_Handler):
                 plt.title("Square root error between GPS and CV2 translations")
                 plt.plot(times[1:], np.linalg.norm(pos_error[:,0:2], axis=1))
         else:
-            axis = ["x-axis", "y-axis", "z-axis"]
+            axis = ["x-axis", "y-axis"]
             for i in range(len(axis)):  
                 plt.figure()  
                 plt.xlabel("Time (s)")
@@ -265,32 +214,22 @@ class Reader(Plot_Handler):
     
     def get_bias(self):
         """ Calculate the bias in CV2 measurement from comparaison with GPS measurements """
-        if self.bias is None:                
-            times = self.get_timestamps(0, np.inf)       
-            t_gps = np.zeros((len(times)-1,2))
-            t_cv2 = np.zeros((len(times)-1,2))
-            r_gps = np.zeros(len(times)-1)
-            r_cv2 = np.zeros(len(times)-1)           
-            for i in range(1,len(times)):           
-                trans_cv, rotation_cv = self.heatmaps[times[i]].image_transformation_from(self.heatmaps[times[i-1]])
-                r_cv2[i-1] = rotation_cv.as_euler('zxy')[0]
-                t_cv2[i-1] = trans_cv[0:2]
-                
-                if hasattr(self,"groundtruth"):
-                    r_gps[i-1] = rotation_proj(self.get_groundtruth_att(times[i-1]), self.get_groundtruth_att(times[i])).as_euler('zxy')[0]
-                    t_gps[i-1] = self.get_groundtruth_att(times[i]).apply(self.get_groundtruth_pos(times[i]) - self.get_groundtruth_pos(times[i-1]))[0:2]             
-                else:                    
-                    r_gps[i-1] = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
-                    t_gps[i-1] = self.heatmaps[times[i]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))[0:2]
-            
-            # bias = np.array(t_cv2 - np.mean(t_cv2, axis=0)).T.dot(np.array(t_gps - np.mean(t_gps, axis=0)))
+        if self.bias is None:               
+            trans_cv2, rot_cv2 = self.get_cv2_measurements()
+            if hasattr(self,"groundtruth"):
+                trans_gps, rot_gps = self.get_groundtruth_measurements()             
+            else:                    
+                trans_gps, rot_gps = self.get_gps_measurements_measurements()
+               
+            # Extrinsic parameters estimation
+            # bias = np.array(trans_cv2 - np.mean(trans_cv2, axis=0)).T.dot(np.array(trans_gps - np.mean(trans_gps, axis=0)))
             # U, _, V = np.linalg.svd(bias)
             # R = V.dot(np.diag([1, np.linalg.det(V.dot(U.T))])).dot(U.T)
-            # self.bias = (np.mean(t_gps, axis=0) - R.dot(np.mean(t_cv2, axis=0)), rot.from_dcm(np.array([[R[0,0], R[0,1], 0], [R[1,0], R[1,1], 0], [0,0,1]])))
+            # self.bias = (np.mean(trans_gps, axis=0) - R.dot(np.mean(trans_cv2, axis=0)), rot.from_dcm(np.array([[R[0,0], R[0,1], 0], [R[1,0], R[1,1], 0], [0,0,1]])))
             
             # Brutal mean
-            bias_trans = np.append(np.mean(stat_filter(t_gps - t_cv2, 0.9), axis=0), 0) 
-            bias_rot = np.mean(stat_filter(r_gps-r_cv2, 0.9), axis=0)
+            bias_trans = np.append(np.mean(stat_filter(trans_cv2 - trans_gps, 0.9), axis=0), 0) 
+            bias_rot = np.mean(stat_filter(rot_cv2 - rot_gps, 0.9), axis=0)
             self.bias = (bias_trans, rot.from_dcm(np.array([[np.cos(bias_rot), -np.sin(bias_rot), 0], [np.sin(bias_rot), np.cos(bias_rot), 0], [0,0,1]])))
         return self.bias
            
@@ -355,30 +294,98 @@ class Reader(Plot_Handler):
             return self.heatmaps[times].attitude
         else:
             return [self.heatmaps[t].attitude for t in times]
-            
-    def get_gps_speed(self, t_ini=None, t_final=None):
-        """ Return GPS speed for time between t_ini and t_final """
-        times = self.get_timestamps(t_ini, t_final)
-        if not t_ini is None and t_final is None:
-            return np.linalg.norm(self.heatmaps[self.get_timestamps(times+0.1)].gps_pos - self.heatmaps[self.get_timestamps(times)].gps_pos)/0.1
-        else:
-            out = []
-            for i in range(len(times)-1):
-                out.append(np.linalg.norm(self.heatmaps[times[i+1]].gps_pos - self.heatmaps[times[i]].gps_pos)/(times[i+1]- times[i]))
-            return out
-            
-    def plot_trajectory(self, arrow=False):
+        
+    def get_cv2_measurements(self):
+        """ Return cv2 measurements between two consecutive images """
+        if self.cv2_rot is None or self.cv2_trans is None:
+            print("Retreiving CV2 measurements... ")
+            times = self.get_timestamps(0, np.inf)
+            self.cv2_trans = np.zeros((len(times)-1,2))
+            self.cv2_rot = np.zeros(len(times)-1)           
+            for i in range(1,len(times)):           
+                trans_cv, rotation_cv = self.get_radardata(times[i]).image_transformation_from(self.get_radardata(times[i-1]))
+                self.cv2_rot[i-1] = rotation_cv.as_euler('zxy')[0]
+                self.cv2_trans[i-1] = trans_cv[0:2]
+        return self.cv2_trans, self.cv2_rot
+        
+    def get_gps_measurements(self):
+        """ Return GPS measurements between two consecutive images """
+        if self.gps_rot is None or self.gps_trans is None:
+            print("Retreiving GPS measurements... ")
+            times = self.get_timestamps(0, np.inf)
+            self.gps_trans = np.zeros((len(times)-1,2))
+            self.gps_rot = np.zeros(len(times)-1)           
+            for i in range(1,len(times)):           
+                self.gps_rot[i-1] = rotation_proj(self.get_gps_att(times[i-1]), self.get_gps_att(times[i])).as_euler('zxy')[0]
+                self.gps_trans[i-1] = self.heatmaps[times[i-1]].earth2rbd(self.get_gps_pos(times[i]) - self.get_gps_pos(times[i-1]))[0:2]
+        return self.gps_trans, self.gps_rot
+        
+    def get_groundtruth_measurements(self):
+        """ Return groundtruth measurements between two consecutive images """
+        if self.groundtruth_rot is None or self.groundtruth_trans is None:
+            if hasattr(self,"groundtruth"):
+                print("Retreiving groundtruth measurements...")
+                times = self.get_timestamps(0, np.inf)
+                self.groundtruth_trans = np.zeros((len(times)-1,2))
+                self.groundtruth_rot = np.zeros(len(times)-1)           
+                for i in range(1,len(times)):           
+                    self.groundtruth_rot[i-1] = rotation_proj(self.get_groundtruth_att(times[i-1]), self.get_groundtruth_att(times[i])).as_euler('zxy')[0]
+                    self.groundtruth_trans[i-1] = self.heatmaps[times[i-1]].earth2rbd(self.get_groundtruth_pos(times[i]) - self.get_groundtruth_pos(times[i-1]))[0:2]
+        return self.groundtruth_trans, self.groundtruth_rot
+        
+    def plot_trajectory(self, arrow=False, projection="ENU", car_position=None):
         """ Redefine Plot_Handler plot_trajectory function to plot only GPS trajectories """
-        super().plot_trajectory(arrow, True, False)
+        super().plot_trajectory(arrow, False, False, projection=projection, car_position=car_position)
         
     def export_map(self):
         """ Redefine Plot_Handler export_map function to plot only GPS trajectories """
-        super().export_map(True, False)
+        super().export_map(False, False)
         
-    def plot_altitude(self):
+    def plot_altitude(self, projection="ENU", car_position=None):
         """ Redefine Plot_Handler plot_altitude function to plot only GPS trajectories """
-        super().plot_altitude(True, False)
+        super().plot_altitude(False, False, projection="ENU", car_position=None)
     
-    def plot_attitude(self):
+    def plot_attitude(self, projection="ENU", car_position=None):
         """ Redefine Plot_Handler plot_attitude function to plot only GPS trajectories """
-        super().plot_attitude(True, False)
+        super().plot_attitude(False, False, projection="ENU", car_position=None)
+        
+    def play_video(self, t_ini=0, t_final=np.inf, grayscale = True, save=False):
+        """ Play a video of radar images between t_ini and t_final
+            grayscale: if False automatic coloration of images is used
+            save: if True, save the video as a .mp4
+        """
+        # Handling pause/resume event when clicking on the video
+        anim_running = True
+        def onClick(event):
+            nonlocal anim_running
+            if anim_running:
+                ani.event_source.stop()
+                anim_running = False
+            else:
+                ani.event_source.start()
+                anim_running = True
+                    
+        times = self.get_timestamps(t_ini, t_final)
+        images = []       
+        fig = plt.figure(facecolor='black')
+        fig.set_figwidth(8)
+        fig.canvas.mpl_connect('button_press_event', onClick)
+        ax = plt.axes()     
+        [ax.spines[spine].set_color('white') for spine in ax.spines]
+        ax.set_facecolor("black")
+        ax.tick_params(colors='black')
+                
+        print("Creating video...")
+        for t in times:
+            if grayscale:              
+                images.append([ax.imshow(Image.fromarray(self.heatmaps[t].img), cmap='gray', vmin=0, vmax=255), ax.text(0.6,0.8,str(round(t,2)), color='white')])
+            else:
+                images.append([ax.imshow(Image.fromarray(self.heatmaps[t].img)), ax.text(0.6,0.8,str(round(t,2)), color='white')])
+
+        ani = ArtistAnimation(fig, images, interval=100, blit=False, repeat_delay=1000)
+        if save:
+            print("Saving video: "+str(self.src) + '.mp4')
+            os.makedirs(os.path.dirname('Videos/' + str(self.src) + '.mp4'), exist_ok=True)
+            ani.save('Videos/' + str(self.src) + '.mp4', fps=10, dpi=200, savefig_kwargs={'facecolor': 'black'})
+        plt.show()
+        return ani
